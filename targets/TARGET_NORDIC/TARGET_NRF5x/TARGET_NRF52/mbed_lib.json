@@ -201,7 +201,8 @@
             ],
             "target.lf_clock_src": "NRF_LF_SRC_RC",
             "target.lf_clock_rc_calib_timer_interval": 16,
-            "target.lf_clock_rc_calib_mode_config": 0
+            "target.lf_clock_rc_calib_mode_config": 2
+		
         },
         "MTB_LAIRD_BL654": {
             "target.macros_add": [
