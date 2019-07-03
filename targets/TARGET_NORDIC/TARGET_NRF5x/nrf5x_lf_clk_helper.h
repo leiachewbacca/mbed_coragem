@@ -43,11 +43,7 @@
     #warning No configuration for LF clock source. Xtal source will be used as a default configuration.
 #endif
 
-#define DEFAULT_LFCLK_CONF_ACCURACY NRF_CLOCK_LF_XTAL_ACCURACY_500_PPM
-
-#ifndef NRF_SDH_CLOCK_LF_ACCURACY
-#define NRF_SDH_CLOCK_LF_ACCURACY 1
-#endif
+#define DEFAULT_LFCLK_CONF_ACCURACY NRF_CLOCK_LF_XTAL_ACCURACY_20_PPM
 
 #ifdef NRF52
     #define MAX_LFCLK_CONF_RC_CTIV    32
@@ -58,7 +54,7 @@
 #define MAX_LFCLK_CONF_RC_TEMP_CTIV   33
 
 #define DEFAULT_LFCLK_CONF_RC_CTIV 16     // Check temperature every 16 * 250ms.
-#define DEFAULT_LFCLK_CONF_RC_TEMP_CTIV 2 // Only calibrate if temperature has changed.
+#define DEFAULT_LFCLK_CONF_RC_TEMP_CTIV 1 // Only calibrate if temperature has changed.
 
 
 #define NRF_LF_SRC_XTAL  2 
