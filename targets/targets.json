@@ -7263,8 +7263,7 @@
             "lf_clock_rc_calib_mode_config": {
                 "macro_name": "MBED_CONF_NORDIC_NRF_LF_CLOCK_CALIB_MODE_CONFIG",
                 "value": 2
-            },
-
+            }
         },
         "overrides": {
             "mpu-rom-end": "0x1fffffff"
