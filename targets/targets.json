@@ -7266,7 +7266,8 @@
             }
         },
         "overrides": {
-            "mpu-rom-end": "0x1fffffff"
+            "mpu-rom-end": "0x1fffffff",
+	    "lf_clock_src": "NRF_LF_SRC_RC"
         },
         "OUTPUT_EXT": "hex",
         "is_disk_virtual": true,
