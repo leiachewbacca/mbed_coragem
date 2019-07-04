@@ -7264,11 +7264,7 @@
                 "macro_name": "MBED_CONF_NORDIC_NRF_LF_CLOCK_CALIB_MODE_CONFIG",
                 "value": 2
             },
-	    "lf_clock_synth_accuracy": {
-            "macro_name": "MBED_CONF_NORDIC_LF_CLOCK_XTAL_ACCURACY",
-	    "value": "NRF_CLOCK_LF_SYNTH_ACCURACY_500_PPM"
-            
-        },
+
         },
         "overrides": {
             "mpu-rom-end": "0x1fffffff"
