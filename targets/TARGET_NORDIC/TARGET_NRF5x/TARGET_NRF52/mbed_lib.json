@@ -8,11 +8,6 @@
         "uart_1_fifo_size": {
             "help": "UART1 FIFO buffer. FIFO buffer is filled from DMA buffer.",
             "value": 32
-        },
- 
-        "lf_clock_synth_accuracy": {
-            "value": "NRF_CLOCK_LF_SYNTH_ACCURACY_500_PPM",
-            "macro_name": "MBED_CONF_NORDIC_LF_CLOCK_XTAL_ACCURACY"
         }
     },
     "macros": [
@@ -204,9 +199,7 @@
                 "CONFIG_GPIO_AS_PINRESET",
                 "NRF52_ERRATA_20"
             ],
-            "target.lf_clock_src": "NRF_LF_SRC_RC",
-            "target.lf_clock_rc_calib_timer_interval": 16,
-            "target.lf_clock_rc_calib_mode_config": 2
+            "target.lf_clock_src": "NRF_LF_SRC_RC"
 	    
 		
         },
