@@ -158,8 +158,8 @@ typedef enum {
     p46 = P1_14,
     p47 = P1_15,
     
-    LED1    = p45,
-    LED2    = p46,
+    LED1    = p13,
+    LED2    = p14,
     LED3    = p15,
     LED4    = p16,
 

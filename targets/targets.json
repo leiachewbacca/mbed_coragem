@@ -7254,7 +7254,7 @@
             "lf_clock_src": {
                 "macro_name": "MBED_CONF_NORDIC_NRF_LF_CLOCK_SRC",
                 "help": "Select Low Frequency clock source. Options: NRF_LF_SRC_XTAL, NRF_LF_SRC_SYNTH, and NRF_LF_SRC_RC",
-                "value": "NRF_LF_SRC_RC"
+                "value": "NRF_LF_SRC_XTAL"
             },
             "lf_clock_rc_calib_timer_interval": {
                 "macro_name": "MBED_CONF_NORDIC_NRF_LF_CLOCK_CALIB_TIMER_INTERVAL",
@@ -7262,12 +7262,11 @@
             },
             "lf_clock_rc_calib_mode_config": {
                 "macro_name": "MBED_CONF_NORDIC_NRF_LF_CLOCK_CALIB_MODE_CONFIG",
-                "value": 2
+                "value": 0
             }
         },
         "overrides": {
-            "mpu-rom-end": "0x1fffffff",
-	    "lf_clock_src": "NRF_LF_SRC_RC"
+            "mpu-rom-end": "0x1fffffff"
         },
         "OUTPUT_EXT": "hex",
         "is_disk_virtual": true,
