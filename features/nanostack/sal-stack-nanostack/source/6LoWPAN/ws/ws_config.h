@@ -31,15 +31,25 @@
 #define WS_RPL_DIO_DOUBLING 2
 #define WS_RPL_DIO_REDUNDANCY 0
 
+#define WS_RPL_MIN_HOP_RANK_INCREASE 196
+#define WS_RPL_MAX_HOP_RANK_INCREASE 2048
+
+#define WS_CERTIFICATE_RPL_MIN_HOP_RANK_INCREASE 128
+#define WS_CERTIFICATE_RPL_MAX_HOP_RANK_INCREASE 0
 
 /* Border router version change interval
  *
  * Minimum interval at which a Border Router shall increment its PAN Version value.
  */
 
-#define PAN_VERSION_LIFETIME 240
+#define PAN_VERSION_SMALL_NETWORK_LIFETIME 4*60
+#define PAN_VERSION_MEDIUM_NETWORK_LIFETIME 15*60
+#define PAN_VERSION_LARGE_NETWORK_LIFETIME 30*60 //30min
 
-#define RPL_VERSION_LIFETIME 5*3600
+// RPL version number update intervall
+// after restart version numbers are increased faster and then slowed down when network is stable
+#define RPL_VERSION_LIFETIME 12*3600
+#define RPL_VERSION_LIFETIME_RESTART 3600
 
 /* Border router connection lost timeout
  *
@@ -50,7 +60,11 @@
  *
  */
 
-#define PAN_VERSION_TIMEOUT 1920
+#define PAN_VERSION_SMALL_NETWORK_TIMEOUT 32*60
+
+#define PAN_VERSION_MEDIUM_NETWORK_TIMEOUT 64*60
+
+#define PAN_VERSION_LARGE_NETWORK_TIMEOUT 90*60
 
 /* Routing Cost Weighting factor
  */
@@ -68,7 +82,7 @@
  *
  * Default value for us is -93
  */
-extern int8_t DEVICE_MIN_SENS;
+extern uint8_t DEVICE_MIN_SENS;
 
 /* Candidate parent Threshold
  */
@@ -89,14 +103,14 @@ extern int8_t DEVICE_MIN_SENS;
 
 #define DATA_MESSAGE_IMIN (10 * 1000)
 #define DATA_MESSAGE_TIMER_EXPIRATIONS 3
-#define DATA_MESSAGE_IMAX (DATA_MESSAGE_IMIN)
+#define DATA_MESSAGE_IMAX (80 * 1000)
 #define MPL_SEED_SET_ENTRY_TIMEOUT (DATA_MESSAGE_IMAX * 24 * 4 / 1000) // 10 seconds per hop making this 240 seconds
 
 /* DHCP client timeout configuration values
  *
  */
 #define WS_DHCP_SOLICIT_TIMEOUT         60
-#define WS_DHCP_SOLICIT_MAX_RT          3600
+#define WS_DHCP_SOLICIT_MAX_RT          900
 #define WS_DHCP_SOLICIT_MAX_RC          0
 
 
@@ -120,5 +134,40 @@ extern int8_t DEVICE_MIN_SENS;
 #define WS_BLACKLIST_PURGE_NBR            3
 #define WS_BLACKLIST_PURGE_TIMER_TIMEOUT 60
 
+/*
+ * MAC frame counter NVM storing configuration
+ */
+#define FRAME_COUNTER_STORE_INTERVAL     60   // Time interval (on seconds) between frame counter store operations
+#define FRAME_COUNTER_STORE_TRIGGER      5    // Delay (on seconds) before storing, when storing of frame counters is triggered
+#define FRAME_COUNTER_INCREMENT          1000 // How much frame counter is incremented on start up
+#define FRAME_COUNTER_STORE_THRESHOLD    800  // How much frame counter must increment before it is stored
+
+
+/*
+ *  RPL Configuration parameters
+ */
+#define WS_MAX_DAO_RETRIES 3 // With 40s, 80s, 160s, 320s, 640s
+#define WS_MAX_DAO_INITIAL_TIMEOUT 400 // With 40s initial value exponentially increasing
+#define WS_MIN_DIO_MULTICAST_CONFIG_ADVERTISMENT_COUNT 0xff // Advertisment config at every MC DIO
+#define WS_MAX_PARENT_SET_COUNT 2 // maximum amount of parents selected by node
+
+#define WS_NODE_RPL_SOFT_MEM_LIMIT 4*1024 // Limit when RPL start purge unused data
+#define WS_NODE_RPL_HARD_MEM_LIMIT 6*1024 // Limit when RPL memory allocation start limit allocation
+
+/*
+ * Candidate parent list parameters
+ */
+
+#define WS_PARENT_LIST_SIZE 10
+#define WS_PARENT_LIST_MAX_AGE 3600*10         // 1 hour in 100ms ticks
+#define WS_PARENT_LIST_MAX_PAN_IN_DISCOVERY 5  // During discovery state how many neighbours per pan
+#define WS_PARENT_LIST_MAX_PAN_IN_ACTIVE 2     // During active state two nodes per pan is allowed
+
+/*
+ * Modifications for base specification.
+ *
+ * ERRATA changes after 1.0 specification release.
+ */
+#define WISUN_1_0_ERRATA_FIX
 
 #endif /* WS_CONFIG_H_ */

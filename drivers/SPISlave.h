@@ -25,7 +25,11 @@
 #include "hal/spi_api.h"
 
 namespace mbed {
-/** \addtogroup drivers */
+/**
+ * \defgroup drivers_SPISlave SPISlave class
+ * \ingroup drivers-public-api-spi
+ * @{
+ */
 
 /** A SPI slave, used for communicating with a SPI master device.
  *
@@ -51,7 +55,6 @@ namespace mbed {
  *     }
  * }
  * @endcode
- * @ingroup drivers
  */
 class SPISlave : private NonCopyable<SPISlave> {
 
@@ -67,6 +70,15 @@ public:
      *  @param ssel SPI Chip Select pin.
      */
     SPISlave(PinName mosi, PinName miso, PinName sclk, PinName ssel);
+
+    /** Create a SPI slave connected to the specified pins.
+     *
+     *  @note Either mosi or miso can be specified as NC if not used.
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     */
+    SPISlave(const spi_pinmap_t &pinmap);
+    SPISlave(const spi_pinmap_t &&) = delete; // prevent passing of temporary objects
 
     /** Configure the data transmission format.
      *
@@ -126,6 +138,8 @@ protected:
 
 #endif //!defined(DOXYGEN_ONLY)
 };
+
+/** @}*/
 
 } // namespace mbed
 

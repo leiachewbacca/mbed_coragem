@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2013 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,11 @@
 #include "hal/i2c_api.h"
 
 namespace mbed {
-/** \addtogroup drivers */
+/**
+ * \defgroup drivers_I2CSlave I2CSlave class
+ * \ingroup drivers-public-api-i2c
+ * @{
+ */
 
 /** An I2C Slave, used for communicating with an I2C Master device.
  *
@@ -64,7 +68,6 @@ namespace mbed {
  *     }
  * }
  * @endcode
- * @ingroup drivers
  */
 class I2CSlave {
 
@@ -82,6 +85,13 @@ public:
      *  @param scl I2C clock line pin.
      */
     I2CSlave(PinName sda, PinName scl);
+
+    /** Create an I2C Slave interface, connected to the specified pins.
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     */
+    I2CSlave(const i2c_pinmap_t &static_pinmap);
+    I2CSlave(const i2c_pinmap_t &&) = delete; // prevent passing of temporary objects
 
     /** Set the frequency of the I2C interface.
      *
@@ -159,6 +169,8 @@ protected:
 
 #endif //!defined(DOXYGEN_ONLY)
 };
+
+/** @}*/
 
 } // namespace mbed
 

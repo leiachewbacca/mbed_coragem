@@ -30,6 +30,7 @@
 #include "MAC/IEEE802_15_4/mac_defines.h"
 #include "MAC/IEEE802_15_4/mac_header_helper_functions.h"
 #include "MAC/IEEE802_15_4/mac_timer.h"
+#include "MAC/IEEE802_15_4/mac_security_mib.h"
 #include "MAC/IEEE802_15_4/mac_mlme.h"
 #include "MAC/IEEE802_15_4/mac_filter.h"
 #include "MAC/IEEE802_15_4/mac_mcps_sap.h"
@@ -386,14 +387,6 @@ static void mac_sap_no_ack_cb(protocol_interface_rf_mac_setup_s *rf_ptr)
     }
 }
 
-static bool mac_data_counter_too_small(uint32_t current_counter, uint32_t packet_counter)
-{
-    if ((current_counter - packet_counter) >= 2) {
-        return true;
-    }
-    return false;
-}
-
 
 static bool mac_data_asynch_channel_switch(protocol_interface_rf_mac_setup_s *rf_ptr, mac_pre_build_frame_t *active_buf)
 {
@@ -409,6 +402,22 @@ static bool mac_data_asynch_channel_switch(protocol_interface_rf_mac_setup_s *rf
     return true;
 }
 
+
+static void mac_data_ack_tx_finish(protocol_interface_rf_mac_setup_s *rf_ptr)
+{
+    rf_ptr->mac_ack_tx_active = false;
+    if (rf_ptr->fhss_api) {
+        //SET tx completed false because ack isnot never queued
+        rf_ptr->fhss_api->data_tx_done(rf_ptr->fhss_api, false, false, 0xff);
+    }
+    if (rf_ptr->active_pd_data_request) {
+
+        mcps_pending_packet_counter_update_check(rf_ptr, rf_ptr->active_pd_data_request);
+        //GEN TX failure
+        mac_sap_cca_fail_cb(rf_ptr);
+    }
+}
+
 static int8_t mac_data_interface_tx_done_cb(protocol_interface_rf_mac_setup_s *rf_ptr, phy_link_tx_status_e status, uint8_t cca_retry, uint8_t tx_retry)
 {
 
@@ -419,7 +428,17 @@ static int8_t mac_data_interface_tx_done_cb(protocol_interface_rf_mac_setup_s *r
     if (status == PHY_LINK_CCA_PREPARE) {
 
         if (rf_ptr->mac_ack_tx_active) {
-            return PHY_TX_ALLOWED;
+            //Accept direct non crypted acks and crypted only if neighbor is at list
+            if (rf_ptr->ack_tx_possible) {
+                return PHY_TX_ALLOWED;
+            }
+
+            //Compare time to started time
+            if (mac_mcps_sap_get_phy_timestamp(rf_ptr) - rf_ptr->enhanced_ack_handler_timestamp > ENHANCED_ACK_NEIGHBOUR_POLL_MAX_TIME_US || mcps_generic_ack_build(rf_ptr, false) != 0) {
+                mac_data_ack_tx_finish(rf_ptr);
+            }
+
+            return PHY_TX_NOT_ALLOWED;
         }
 
         if (mac_data_asynch_channel_switch(rf_ptr, rf_ptr->active_pd_data_request)) {
@@ -462,32 +481,13 @@ static int8_t mac_data_interface_tx_done_cb(protocol_interface_rf_mac_setup_s *r
         return 0;
     }
 
-    //
-    bool waiting_ack = false;
-
-
     if (rf_ptr->mac_ack_tx_active) {
-        rf_ptr->mac_ack_tx_active = false;
-        if (rf_ptr->fhss_api) {
-            //SET tx completed false because ack isnot never queued
-            rf_ptr->fhss_api->data_tx_done(rf_ptr->fhss_api, false, false, 0xff);
-        }
-        if (rf_ptr->active_pd_data_request) {
-
-            if (rf_ptr->active_pd_data_request->fcf_dsn.securityEnabled) {
-                uint32_t current_counter = mac_mlme_framecounter_get(rf_ptr);
-                if (mac_data_counter_too_small(current_counter, rf_ptr->active_pd_data_request->aux_header.frameCounter)) {
-                    rf_ptr->active_pd_data_request->aux_header.frameCounter = current_counter;
-                    mac_mlme_framecounter_increment(rf_ptr);
-                }
-            }
-            //GEN TX failure
-            mac_sap_cca_fail_cb(rf_ptr);
-        }
+        mac_data_ack_tx_finish(rf_ptr);
         return 0;
     } else {
         // Do not update CCA count when Ack is received, it was already updated with PHY_LINK_TX_SUCCESS event
-        if ((status != PHY_LINK_TX_DONE) && (status != PHY_LINK_TX_DONE_PENDING)) {
+        // Do not update CCA count when CCA_OK is received, PHY_LINK_TX_SUCCESS will update it
+        if ((status != PHY_LINK_TX_DONE) && (status != PHY_LINK_TX_DONE_PENDING) && (status != PHY_LINK_CCA_OK)) {
             /* For PHY_LINK_TX_SUCCESS and PHY_LINK_CCA_FAIL cca_retry must always be > 0.
              * PHY_LINK_TX_FAIL either happened during transmission or when waiting Ack -> we must use the CCA count given by PHY.
              */
@@ -502,11 +502,40 @@ static int8_t mac_data_interface_tx_done_cb(protocol_interface_rf_mac_setup_s *r
         timer_mac_stop(rf_ptr);
     }
 
+    if (rf_ptr->fhss_api && rf_ptr->active_pd_data_request->asynch_request == false) {
+        /* waiting_ack == false allows FHSS to change back to RX channel after transmission
+         * tx_completed == true allows FHSS to delete stored failure handles
+         */
+        bool waiting_ack = false, tx_completed = false;
+        if (status == PHY_LINK_TX_SUCCESS && !rf_ptr->macTxRequestAck) {
+            waiting_ack = false;
+            tx_completed = true;
+        } else if (status == PHY_LINK_TX_SUCCESS && rf_ptr->macTxRequestAck) {
+            waiting_ack = true;
+            tx_completed = false;
+        } else if (status == PHY_LINK_CCA_FAIL) {
+            waiting_ack = false;
+            tx_completed = false;
+        } else if (status == PHY_LINK_CCA_OK) {
+            waiting_ack = false;
+            tx_completed = false;
+        } else if (status == PHY_LINK_TX_FAIL) {
+            waiting_ack = false;
+            tx_completed = false;
+        } else if (status == PHY_LINK_TX_DONE) {
+            waiting_ack = false;
+            tx_completed = true;
+        } else if (status == PHY_LINK_TX_DONE_PENDING) {
+            waiting_ack = false;
+            tx_completed = true;
+        }
+        rf_ptr->fhss_api->data_tx_done(rf_ptr->fhss_api, waiting_ack, tx_completed, rf_ptr->active_pd_data_request->msduHandle);
+    }
+
     switch (status) {
         case PHY_LINK_TX_SUCCESS:
             if (rf_ptr->macTxRequestAck) {
                 timer_mac_start(rf_ptr, MAC_TIMER_ACK, rf_ptr->mac_ack_wait_duration); /*wait for ACK 1 ms*/
-                waiting_ack = true;
             } else {
                 //TODO CHECK this is MAC_TX_ PERMIT OK
                 mac_tx_done_state_set(rf_ptr, MAC_TX_DONE);
@@ -535,15 +564,6 @@ static int8_t mac_data_interface_tx_done_cb(protocol_interface_rf_mac_setup_s *r
 
         default:
             break;
-    }
-    if (rf_ptr->fhss_api) {
-        bool tx_is_done = false;
-        if (rf_ptr->mac_tx_result == MAC_TX_DONE) {
-            tx_is_done = true;
-        }
-        if (rf_ptr->active_pd_data_request->asynch_request == false) {
-            rf_ptr->fhss_api->data_tx_done(rf_ptr->fhss_api, waiting_ack, tx_is_done, rf_ptr->active_pd_data_request->msduHandle);
-        }
     }
     return 0;
 }
@@ -764,7 +784,17 @@ static int8_t mac_pd_sap_generate_ack(protocol_interface_rf_mac_setup_s *rf_ptr,
     mac_api->enhanced_ack_data_req_cb(mac_api, &ack_payload, pd_data_ind->dbm, pd_data_ind->link_quality);
     //Calculate Delta time
 
-    return mcps_generic_ack_build(rf_ptr, fcf_read, pd_data_ind->data_ptr, &ack_payload);
+    if (mcps_generic_ack_data_request_init(rf_ptr, fcf_read, pd_data_ind->data_ptr, &ack_payload) != 0) {
+        return -1;
+    }
+
+    if (mac_sec_mib_device_description_get(rf_ptr, rf_ptr->enhanced_ack_buffer.DstAddr, rf_ptr->enhanced_ack_buffer.fcf_dsn.DstAddrMode, rf_ptr->enhanced_ack_buffer.DstPANId)) {
+        rf_ptr->ack_tx_possible = true;
+    } else {
+        rf_ptr->ack_tx_possible = false;
+    }
+
+    return mcps_generic_ack_build(rf_ptr, true);
 }
 
 static mac_pre_parsed_frame_t *mac_pd_sap_allocate_receive_buffer(protocol_interface_rf_mac_setup_s *rf_ptr, const mac_fcf_sequence_t *fcf_read, arm_pd_sap_generic_ind_t *pd_data_ind)
@@ -860,6 +890,11 @@ int8_t mac_pd_sap_data_cb(void *identifier, arm_phy_sap_msg_t *message)
 
     if (message->id == MAC15_4_PD_SAP_DATA_IND) {
         arm_pd_sap_generic_ind_t *pd_data_ind = &(message->message.generic_data_ind);
+        mac_pre_parsed_frame_t *buffer = NULL;
+        if (pd_data_ind->data_len == 0) {
+            goto ERROR_HANDLER;
+        }
+
         if (pd_data_ind->data_len < 3) {
             return -1;
         }
@@ -867,7 +902,7 @@ int8_t mac_pd_sap_data_cb(void *identifier, arm_phy_sap_msg_t *message)
         mac_fcf_sequence_t fcf_read;
         const uint8_t *ptr = mac_header_parse_fcf_dsn(&fcf_read, pd_data_ind->data_ptr);
 
-        mac_pre_parsed_frame_t *buffer = mac_pd_sap_allocate_receive_buffer(rf_ptr, &fcf_read, pd_data_ind);
+        buffer = mac_pd_sap_allocate_receive_buffer(rf_ptr, &fcf_read, pd_data_ind);
         if (buffer && mac_filter_modify_link_quality(rf_ptr->mac_interface_id, buffer) == 1) {
             goto ERROR_HANDLER;
         }
@@ -905,7 +940,12 @@ int8_t mac_pd_sap_data_cb(void *identifier, arm_phy_sap_msg_t *message)
         }
 ERROR_HANDLER:
         mcps_sap_pre_parsed_frame_buffer_free(buffer);
-        sw_mac_stats_update(rf_ptr, STAT_MAC_RX_DROP, 0);
+        if (pd_data_ind->data_len >= 3) {
+            sw_mac_stats_update(rf_ptr, STAT_MAC_RX_DROP, 0);
+        }
+        if (rf_ptr->fhss_api) {
+            rf_ptr->fhss_api->data_tx_done(rf_ptr->fhss_api, false, false, 0);
+        }
         return -1;
 
     } else if (message->id == MAC15_4_PD_SAP_DATA_TX_CONFIRM) {

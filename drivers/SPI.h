@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2015 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,12 +40,16 @@
 #include "platform/CThunk.h"
 #include "hal/dma_api.h"
 #include "platform/CircularBuffer.h"
-#include "platform/FunctionPointer.h"
+#include "platform/Callback.h"
 #include "platform/Transaction.h"
 #endif
 
 namespace mbed {
-/** \addtogroup drivers */
+/**
+ * \defgroup drivers_SPI SPI class
+ * \ingroup drivers-public-api-spi
+ * @{
+ */
 
 struct use_gpio_ssel_t { };
 const use_gpio_ssel_t use_gpio_ssel;
@@ -90,7 +94,6 @@ const use_gpio_ssel_t use_gpio_ssel;
  *     device.unlock();
  * }
  * @endcode
- * @ingroup drivers
  */
 class SPI : private NonCopyable<SPI> {
 
@@ -127,6 +130,35 @@ public:
      *  @param ssel SPI Chip Select pin.
      */
     SPI(PinName mosi, PinName miso, PinName sclk, PinName ssel, use_gpio_ssel_t);
+
+    /** Create a SPI master connected to the specified pins.
+     *
+     *  @note This constructor passes the SSEL pin selection to the target HAL.
+     *  Not all targets support SSEL, so this cannot be relied on in portable code.
+     *  Portable code should use the alternative constructor that uses GPIO
+     *  for SSEL.
+     *
+     *  @note You can specify mosi or miso as NC if not used.
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     */
+    SPI(const spi_pinmap_t &static_pinmap);
+    SPI(const spi_pinmap_t &&) = delete; // prevent passing of temporary objects
+
+    /** Create a SPI master connected to the specified pins.
+     *
+     *  @note This constructor manipulates the SSEL pin as a GPIO output
+     *  using a DigitalOut object. This should work on any target, and permits
+     *  the use of select() and deselect() methods to keep the pin asserted
+     *  between transfers.
+     *
+     *  @note You can specify mosi or miso as NC if not used.
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     *  @param ssel SPI Chip Select pin.
+     */
+    SPI(const spi_pinmap_t &static_pinmap, PinName ssel);
+    SPI(const spi_pinmap_t &&, PinName) = delete; // prevent passing of temporary objects
 
     virtual ~SPI();
 
@@ -345,15 +377,21 @@ protected:
     enum SPIName { GlobalSPI };
 #endif
 
+    // All members of spi_peripheral_s must be initialized to make the structure
+    // constant-initialized, and hence able to be omitted by the linker,
+    // as SingletonPtr now relies on C++ constant-initialization. (Previously it
+    // worked through C++ zero-initialization). And all the constants should be zero
+    // to ensure it stays in the actual zero-init part of the image if used, avoiding
+    // an initialized-data cost.
     struct spi_peripheral_s {
         /* Internal SPI name identifying the resources. */
-        SPIName name;
+        SPIName name = SPIName(0);
         /* Internal SPI object handling the resources' state. */
-        spi_t spi;
+        spi_t spi{};
         /* Used by lock and unlock for thread safety */
         SingletonPtr<PlatformMutex> mutex;
         /* Current user of the SPI */
-        SPI *owner;
+        SPI *owner = nullptr;
 #if DEVICE_SPI_ASYNCH && TRANSACTION_QUEUE_SIZE_SPI
         /* Queue of pending transfers */
         SingletonPtr<CircularBuffer<Transaction<SPI>, TRANSACTION_QUEUE_SIZE_SPI> > transaction_buffer;
@@ -399,6 +437,12 @@ protected:
     char _write_fill;
     /* Select count to handle re-entrant selection */
     int8_t _select_count;
+    /* Static pinmap data */
+    const spi_pinmap_t *_static_pinmap;
+    /* SPI peripheral name */
+    SPIName _peripheral_name;
+    /* Pointer to spi init function */
+    void (*_init_func)(SPI *);
 
 private:
     void _do_construct();
@@ -416,8 +460,14 @@ private:
      */
     static spi_peripheral_s *_alloc();
 
+    static void _do_init(SPI *obj);
+    static void _do_init_direct(SPI *obj);
+
+
 #endif //!defined(DOXYGEN_ONLY)
 };
+
+/** @}*/
 
 } // namespace mbed
 

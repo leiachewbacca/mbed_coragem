@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2013 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,13 +22,16 @@
 #if DEVICE_SERIAL || defined(DOXYGEN_ONLY)
 
 #include "platform/Stream.h"
-#include "SerialBase.h"
+#include "drivers/SerialBase.h"
 #include "platform/PlatformMutex.h"
-#include "hal/serial_api.h"
 #include "platform/NonCopyable.h"
 
 namespace mbed {
-/** \addtogroup drivers */
+/**
+ * \defgroup drivers_Serial Serial class
+ * \ingroup drivers-public-api-uart
+ * @{
+ */
 
 /** A serial port (UART) for communication with other serial devices
  *
@@ -49,7 +52,6 @@ namespace mbed {
  *     pc.printf("Hello World\n");
  * }
  * @endcode
- * @ingroup drivers
  */
 class Serial : public SerialBase, public Stream, private NonCopyable<Serial> {
 
@@ -71,6 +73,17 @@ public:
      */
     Serial(PinName tx, PinName rx, const char *name = NULL, int baud = MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE);
 
+    /** Create a Serial port, connected to the specified transmit and receive pins
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     *  @param name The name of the stream associated with this serial port (optional)
+     *  @param baud The baud rate of the serial port (optional, defaults to MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE or 9600)
+     *
+     *  @note
+     *    Either tx or rx may be specified as NC (Not Connected) if unused
+     */
+    Serial(const serial_pinmap_t &static_pinmap, const char *name = NULL, int baud = MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE);
+    Serial(const serial_pinmap_t &&, const char * = NULL, int = MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE) = delete; // prevent passing of temporary objects
 
     /** Create a Serial port, connected to the specified transmit and receive pins, with the specified baud
      *
@@ -82,6 +95,17 @@ public:
      *    Either tx or rx may be specified as NC (Not Connected) if unused
      */
     Serial(PinName tx, PinName rx, int baud);
+
+    /** Create a Serial port, connected to the specified transmit and receive pins, with the specified baud
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     *  @param baud The baud rate of the serial port
+     *
+     *  @note
+     *    Either tx or rx may be specified as NC (Not Connected) if unused
+     */
+    Serial(const serial_pinmap_t &static_pinmap, int baud);
+    Serial(const serial_pinmap_t &&, int) = delete; // prevent passing of temporary objects
 
     /* Stream gives us a FileHandle with non-functional poll()/readable()/writable. Pass through
      * the calls from the SerialBase instead for backwards compatibility. This problem is
@@ -110,6 +134,8 @@ protected:
     PlatformMutex _mutex;
 #endif
 };
+
+/** @}*/
 
 } // namespace mbed
 

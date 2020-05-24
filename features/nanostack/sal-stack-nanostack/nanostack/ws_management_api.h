@@ -77,13 +77,25 @@ extern "C" {
 
 #define NETWORK_SIZE_AUTOMATIC 0x00
 #define NETWORK_SIZE_SMALL 0x01
+#define NETWORK_SIZE_MEDIUM 0x08
 #define NETWORK_SIZE_LARGE 0x10
+#define NETWORK_SIZE_CERTIFICATE 0xFF
 
 
 /** Temporary API change flag. this will be removed when new version of API is implemented on applications
  *
  */
 #define WS_MANAGEMENT_API_VER_2
+
+/**
+ * \brief Struct ws_statistics defines the Wi-SUN statistics storage structure.
+ */
+typedef struct ws_statistics {
+    /** Asynch TX counter */
+    uint32_t asynch_tx_count;
+    /** Asynch RX counter */
+    uint32_t asynch_rx_count;
+} ws_statistics_t;
 
 /**
  * Initialize Wi-SUN stack.
@@ -103,6 +115,22 @@ int ws_management_node_init(
     uint8_t regulatory_domain,
     char *network_name_ptr,
     fhss_timer_t *fhss_timer_ptr);
+
+/**
+ * Change the network name
+ *
+ * Change the network name dynamically at a runtime.
+ * If stack is running the network discovery is restarted.
+ *
+ * \param interface_id Network interface ID.
+ * \param network_name_ptr Nul terminated Network name limited to 32 characters.
+ *
+ * \return 0, Init OK.
+ * \return <0 Init fail.
+ */
+int ws_management_network_name_set(
+    int8_t interface_id,
+    char *network_name_ptr);
 
 /**
  * Configure regulatory domain of Wi-SUN stack.
@@ -219,9 +247,10 @@ int ws_management_fhss_timing_configure(
  * Change the default configuration for Wi-SUN FHSS operation.
  * if application defined is used the behaviour is undefined
  *
+ *
  * \param interface_id Network interface ID.
  * \param channel_function Unicast channel function.
- * \param fixed_channel Used channel when channel function is fixed channel. If 0xFFFF, randomly chosen channel is used.
+ * \param fixed_channel Used channel when channel function is fixed channel.
  * \param dwell_interval Used dwell interval when channel function is TR51 or DH1.
  *
  * \return 0, Init OK.
@@ -239,9 +268,10 @@ int ws_management_fhss_unicast_channel_function_configure(
  * Change the default configuration for Wi-SUN FHSS operation.
  * if application defined is used the behaviour is undefined
  *
+ *
  * \param interface_id Network interface ID.
  * \param channel_function Broadcast channel function.
- * \param fixed_channel Used channel when channel function is fixed channel. If 0xFFFF, randomly chosen channel is used.
+ * \param fixed_channel Used channel when channel function is fixed channel.
  * \param dwell_interval Broadcast channel dwell interval.
  * \param broadcast_interval Broadcast interval.
  *
@@ -254,6 +284,30 @@ int ws_management_fhss_broadcast_channel_function_configure(
     uint16_t fixed_channel,
     uint8_t dwell_interval,
     uint32_t broadcast_interval);
+
+/**
+ * Start collecting Wi-SUN statistics.
+ *
+ * \param interface_id Network interface ID.
+ * \param stats_ptr Pointer to stored statistics.
+ *
+ * \return 0 Success.
+ * \return <0 Failure.
+ */
+int ws_statistics_start(
+    int8_t interface_id,
+    ws_statistics_t *stats_ptr);
+
+/**
+ * Stop collecting Wi-SUN statistics.
+ *
+ * \param interface_id Network interface ID.
+ *
+ * \return 0 Success.
+ * \return <0 Failure.
+ */
+int ws_statistics_stop(
+    int8_t interface_id);
 
 #ifdef __cplusplus
 }

@@ -54,7 +54,6 @@ void UBLOX_N2XX_CellularStack::NSONMI_URC()
 
     socket = find_socket(a);
     if (socket != NULL) {
-        socket->rx_avail = true;
         socket->pending_bytes = b;
         // No debug prints here as they can affect timing
         // and cause data loss in UARTSerial
@@ -84,10 +83,7 @@ nsapi_error_t UBLOX_N2XX_CellularStack::create_socket_impl(CellularSocket *socke
     }
 
     _at.lock();
-    _at.cmd_start("AT+NSOCR=\"DGRAM\",17,");
-    _at.write_int(localport);
-    _at.write_int(1);
-    _at.cmd_stop();
+    _at.cmd_start_stop("+NSOCR", "=", "%s%d%d%d", "DGRAM", 17, localport, 1);
 
     _at.resp_start();
     sock_id = _at.read_int();
@@ -129,13 +125,8 @@ nsapi_size_or_error_t UBLOX_N2XX_CellularStack::socket_sendto_impl(CellularSocke
     }
     char_str_to_hex_str((const char *)data, size, dataStr);
 
-    _at.cmd_start("AT+NSOST=");
-    _at.write_int(socket->id);
-    _at.write_string(address.get_ip_address());
-    _at.write_int(address.get_port());
-    _at.write_int(size);
-    _at.write_string(dataStr);
-    _at.cmd_stop();
+    _at.cmd_start_stop("+NSOST", "=", "%d%s%d%d%s", socket->id, address.get_ip_address(),
+                       address.get_port(), size, dataStr);
 
     _at.resp_start();
     _at.skip_param(); // skip socket id
@@ -176,10 +167,7 @@ nsapi_size_or_error_t UBLOX_N2XX_CellularStack::socket_recvfrom_impl(CellularSoc
             read_blk = length;
         }
         if (socket->pending_bytes > 0) {
-            _at.cmd_start("AT+NSORF=");
-            _at.write_int(socket->id);
-            _at.write_int(read_blk);
-            _at.cmd_stop();
+            _at.cmd_start_stop("+NSORF", "=", "%d%d", socket->id, read_blk);
 
             _at.resp_start();
             _at.skip_param(); // receiving socket id
@@ -220,7 +208,6 @@ nsapi_size_or_error_t UBLOX_N2XX_CellularStack::socket_recvfrom_impl(CellularSoc
     }
     timer.stop();
 
-    socket->rx_avail = false;
     socket->pending_bytes = 0;
     if (!count || (_at.get_last_error() != NSAPI_ERROR_OK)) {
         return NSAPI_ERROR_WOULD_BLOCK;
@@ -237,10 +224,5 @@ nsapi_size_or_error_t UBLOX_N2XX_CellularStack::socket_recvfrom_impl(CellularSoc
 
 nsapi_error_t UBLOX_N2XX_CellularStack::socket_close_impl(int sock_id)
 {
-    _at.lock();
-    _at.cmd_start("AT+NSOCL=");
-    _at.write_int(sock_id);
-    _at.cmd_stop_read_resp();
-
-    return _at.unlock_return_error();
+    return _at.at_cmd_discard("+NSOCL", "=", "%d", sock_id);
 }

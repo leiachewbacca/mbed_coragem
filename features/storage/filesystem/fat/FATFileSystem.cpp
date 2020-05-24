@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2012 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -19,11 +19,12 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#include "diskio.h"
-#include "ffconf.h"
+#include "features/storage/filesystem/fat/ChaN/diskio.h"
+#include "features/storage/filesystem/fat/ChaN/ffconf.h"
+#include "features/storage/filesystem/fat/ChaN/ff.h"
 #include "platform/mbed_debug.h"
 #include "platform/mbed_critical.h"
-#include "filesystem/mbed_filesystem.h"
+#include "features/storage/filesystem/mbed_filesystem.h"
 #include "FATFileSystem.h"
 
 #include <errno.h>
@@ -280,7 +281,7 @@ extern "C" DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 
 // Filesystem implementation (See FATFilySystem.h)
 FATFileSystem::FATFileSystem(const char *name, BlockDevice *bd)
-    : FileSystem(name), _id(-1)
+    : FileSystem(name), _fs(), _id(-1)
 {
     if (bd) {
         mount(bd);
@@ -516,15 +517,12 @@ int FATFileSystem::stat(const char *path, struct stat *st)
         return fat_error_remap(res);
     }
 
-    /* ARMCC doesnt support stat(), and these symbols are not defined by the toolchain. */
-#ifdef TOOLCHAIN_GCC
     st->st_size = f.fsize;
     st->st_mode = 0;
     st->st_mode |= (f.fattrib & AM_DIR) ? S_IFDIR : S_IFREG;
     st->st_mode |= (f.fattrib & AM_RDO) ?
                    (S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) :
                    (S_IRWXU | S_IRWXG | S_IRWXO);
-#endif /* TOOLCHAIN_GCC */
     unlock();
 
     return 0;

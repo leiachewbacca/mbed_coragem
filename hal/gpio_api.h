@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include "device.h"
+#include "pinmap.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,6 +34,18 @@ extern "C" {
  * # Defined behavior
  * * ::gpio_init and other init functions can be called with NC or a valid PinName for the target - Verified by ::gpio_nc_test
  * * ::gpio_is_connected can be used to test whether a gpio_t object was initialized with NC - Verified by ::gpio_nc_test
+ * * ::gpio_init initializes the GPIO pin
+ * * ::gpio_free returns the pin owned by the GPIO object to its reset state
+ * * ::gpio_mode sets the mode of the given pin
+ * * ::gpio_dir sets the direction of the given pin
+ * * ::gpio_write sets the gpio output value
+ * * ::gpio_read reads the input value
+ * * ::gpio_init_in inits the input pin and sets mode to PullDefault
+ * * ::gpio_init_in_ex inits the input pin and sets the mode
+ * * ::gpio_init_out inits the pin as an output, with predefined output value 0
+ * * ::gpio_init_out_ex inits the pin as an output and sets the output value
+ * * ::gpio_init_inout inits the pin to be input/output and set pin mode and value
+ * * The GPIO operations ::gpio_write, ::gpio_read take less than 20us to complete
  *
  * # Undefined behavior
  * * Calling any ::gpio_mode, ::gpio_dir, ::gpio_write or ::gpio_read on a gpio_t object that was initialized
@@ -40,6 +53,16 @@ extern "C" {
  * * Calling ::gpio_set with NC.
  *
  * @{
+ */
+
+/**
+ * \defgroup hal_gpio_tests GPIO HAL tests
+ * The GPIO HAL tests ensure driver conformance to defined behaviour.
+ *
+ * To run the GPIO hal tests use the command:
+ *
+ *     mbed test -t <toolchain> -m <target> -n tests-mbed_hal_fpga_ci_test_shield-gpio,tests-mbed_hal-gpio
+ *
  */
 
 /** Set the given pin as GPIO
@@ -62,6 +85,12 @@ int gpio_is_connected(const gpio_t *obj);
  * @param pin The GPIO pin to initialize (may be NC)
  */
 void gpio_init(gpio_t *obj, PinName pin);
+
+/** Releases the GPIO pin
+ *
+ * @param obj The GPIO object to release
+ */
+void gpio_free(gpio_t *obj);
 
 /** Set the input pin mode
  *
@@ -134,6 +163,18 @@ void gpio_init_out_ex(gpio_t *gpio, PinName pin, int value);
  * @param value     The value to be set for an output pin
  */
 void gpio_init_inout(gpio_t *gpio, PinName pin, PinDirection direction, PinMode mode, int value);
+
+/** Get the pins that support all GPIO tests
+ *
+ * Return a PinMap array of pins that support GPIO. The
+ * array is terminated with {NC, NC, 0}.
+ *
+ * Targets should override the weak implementation of this
+ * function to provide the actual pinmap for GPIO testing.
+ *
+ * @return PinMap array
+ */
+const PinMap *gpio_pinmap(void);
 
 /**@}*/
 

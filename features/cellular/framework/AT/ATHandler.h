@@ -21,16 +21,13 @@
 #include "platform/mbed_retarget.h"
 
 #include "events/EventQueue.h"
-#include "PlatformMutex.h"
 #include "nsapi_types.h"
 
 #include "Callback.h"
 
 #include <cstdarg>
 
-namespace mbed {
-
-class FileHandle;
+#include "UARTSerial.h"
 
 /**
  * If application calls associated FileHandle only from single thread context
@@ -39,6 +36,14 @@ class FileHandle;
   * If you are unsure, then AT_HANDLER_MUTEX must be defined.
   */
 #define AT_HANDLER_MUTEX
+
+#if defined AT_HANDLER_MUTEX && defined MBED_CONF_RTOS_PRESENT
+#include "ConditionVariable.h"
+#endif
+
+namespace mbed {
+
+class FileHandle;
 
 extern const char *OK;
 extern const char *CRLF;
@@ -210,10 +215,23 @@ public:
      */
     bool sync(int timeout_ms);
 
+    /** Sets the delay to be applied before sending any AT command.
+     *
+     *  @param send_delay the minimum delay in ms between the end of last response and the beginning of a new command
+     */
+    void set_send_delay(uint16_t send_delay);
+
+    /** Sets UARTSerial filehandle to given baud rate
+     *
+     *  @param baud_rate
+     */
+    void set_baud(int baud_rate);
+
 protected:
     void event();
-#ifdef AT_HANDLER_MUTEX
-    PlatformMutex _fileHandleMutex;
+#if defined AT_HANDLER_MUTEX && defined MBED_CONF_RTOS_PRESENT
+    rtos::Mutex _fileHandleMutex;
+    rtos::ConditionVariable _oobCv;
 #endif
     FileHandle *_fileHandle;
 private:
@@ -245,7 +263,6 @@ private:
     uint16_t _at_send_delay;
     uint64_t _last_response_stop;
 
-    bool _oob_queued;
     int32_t _ref_count;
     bool _is_fh_usable;
 
@@ -410,9 +427,17 @@ public:
      */
     ssize_t read_hex_string(char *str, size_t size);
 
-    /** Reads as string and converts result to integer. Supports only positive integers.
+    /** Converts contained chars to their hex ascii value and writes the resulting string to the file handle
+     *  For example: "AV" to "4156".
      *
-     *  @return the positive integer or -1 in case of error.
+     *  @param str input buffer to be converted to hex ascii
+     *  @param size of the input param str
+     */
+    void write_hex_string(char *str, size_t size);
+
+    /** Reads as string and converts result to integer. Supports only non-negative integers.
+     *
+     *  @return the non-negative integer or -1 in case of error.
      */
     int32_t read_int();
 
@@ -544,6 +569,8 @@ private:
 
     // time when a command or an URC processing was started
     uint64_t _start_time;
+    // eventqueue event id
+    int _event_id;
 
     char _cmd_buffer[BUFF_SIZE];
 

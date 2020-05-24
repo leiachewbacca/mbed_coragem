@@ -56,10 +56,8 @@
 #include "6LoWPAN/Thread/thread_network_synch.h"
 #include "6LoWPAN/Thread/thread_discovery.h"
 #include "6LoWPAN/Thread/thread_joiner_application.h"
-#include "6LoWPAN/Thread/thread_address_registration_client.h"
 #include "6LoWPAN/Thread/thread_management_client.h"
 #include "6LoWPAN/Thread/thread_management_server.h"
-#include "6LoWPAN/Thread/thread_extension.h"
 #include "6LoWPAN/Thread/thread_leader_service.h"
 #include "6LoWPAN/Thread/thread_beacon.h"
 #include "6LoWPAN/Thread/thread_network_data_lib.h"
@@ -67,7 +65,7 @@
 #include "6LoWPAN/Thread/thread_tmfcop_lib.h"
 #include "6LoWPAN/Thread/thread_nvm_store.h"
 #include "6LoWPAN/Thread/thread_neighbor_class.h"
-#include "6LoWPAN/Thread/thread_extension_bootstrap.h"
+#include "6LoWPAN/Thread/thread_ccm.h"
 #include "thread_management_if.h"
 #include "Common_Protocols/ipv6.h"
 #include "Common_Protocols/icmpv6.h"
@@ -109,6 +107,13 @@ static int mle_attach_child_id_response_build(protocol_interface_info_entry_t *c
 
 static int8_t thread_router_bootstrap_synch_request_send(protocol_interface_info_entry_t *cur);
 static bool thread_child_id_request(protocol_interface_info_entry_t *cur, struct mac_neighbor_table_entry *entry_temp);
+
+
+#ifdef HAVE_THREAD_V2
+static bool thread_router_bootstrap_is_reed_upgrade_allowed(protocol_interface_info_entry_t *cur);
+#else
+#define thread_router_bootstrap_is_reed_upgrade_allowed(cur) (true)
+#endif
 
 static bool thread_router_parent_address_check(protocol_interface_info_entry_t *cur, uint8_t *source_addr)
 {
@@ -964,13 +969,6 @@ int thread_router_bootstrap_reset_child_info(protocol_interface_info_entry_t *cu
     tr_debug("Child free %x", child->mac16);
     thread_dynamic_storage_child_info_clear(cur->id, child);
 
-    /* As we are losing a link to a child address, we can assume that if we have an IP neighbour cache
-     * mapping to that address, it is no longer valid. We must have been their parent, and they must be
-     * finding a new parent, and hence a new 16-bit address. (Losing a link to a router address would not
-     * invalidate our IP->16-bit mapping.)
-     */
-    protocol_6lowpan_release_short_link_address_from_neighcache(cur, child->mac16);
-
     // If Child's RLOC16 appears in the Network Data send the RLOC16 to the Leader
     if (thread_network_data_services_registered(&cur->thread_info->networkDataStorage, child->mac16)) {
         tr_debug("Remove references to Child's RLOC16 from the Network Data");
@@ -1407,7 +1405,7 @@ static void thread_address_registration_tlv_parse(uint8_t *ptr, uint16_t data_le
                 tr_debug("Register %s", trace_ipv6(tempIPv6Address));
                 //Register GP --> 16
                 int retVal = thread_nd_address_registration(cur, tempIPv6Address, mac16, cur->mac_parameters->pan_id, mac64, &new_neighbour_created);
-                thread_extension_address_registration(cur, tempIPv6Address, mac64, new_neighbour_created, retVal == -2);
+                thread_bootstrap_address_registration(cur, tempIPv6Address, mac64, new_neighbour_created, retVal == -2);
                 (void) retVal;
             } else {
                 tr_debug("No Context %u", ctxId);
@@ -1428,7 +1426,7 @@ static void thread_address_registration_tlv_parse(uint8_t *ptr, uint16_t data_le
             } else {
                 //Register GP --> 16
                 int retVal = thread_nd_address_registration(cur, ptr, mac16, cur->mac_parameters->pan_id, mac64, &new_neighbour_created);
-                thread_extension_address_registration(cur, ptr, mac64, new_neighbour_created, retVal == -2);
+                thread_bootstrap_address_registration(cur, ptr, mac64, new_neighbour_created, retVal == -2);
                 (void) retVal;
             }
 
@@ -1486,7 +1484,7 @@ void thread_router_bootstrap_mle_receive_cb(int8_t interface_id, mle_message_t *
             }
 
             // check if security policy prevents sending of parent response
-            if (!thread_extension_is_reed_upgrade_allowed(cur)) {
+            if (!thread_router_bootstrap_is_reed_upgrade_allowed(cur)) {
                 tr_debug("Security policy prevents parent response; drop packet");
                 return;
             }
@@ -1605,7 +1603,7 @@ void thread_router_bootstrap_mle_receive_cb(int8_t interface_id, mle_message_t *
             }
 
             // check if security policy prevents sending of child id response
-            if (!thread_extension_is_reed_upgrade_allowed(cur)) {
+            if (!thread_router_bootstrap_is_reed_upgrade_allowed(cur)) {
                 tr_debug("Security policy prevents child id response; drop packet");
                 return;
             }
@@ -1819,7 +1817,6 @@ void thread_router_bootstrap_mle_receive_cb(int8_t interface_id, mle_message_t *
                 // Was this previously our child? If yes, update.
                 if ((entry_temp->mac16 & THREAD_CHILD_MASK) && thread_router_addr_from_addr(entry_temp->mac16) == cur->thread_info->routerShortAddress) {
                     thread_dynamic_storage_child_info_clear(cur->id, entry_temp);
-                    protocol_6lowpan_release_short_link_address_from_neighcache(cur, entry_temp->mac16);
                 }
                 update_mac_mib = true;
                 entry_temp->mac16 = shortAddress; // short address refreshed
@@ -2166,6 +2163,77 @@ int thread_router_bootstrap_link_synch_start(protocol_interface_info_entry_t *cu
     }
     return -1;
 }
+#ifdef HAVE_THREAD_V2
+
+static bool thread_router_bootstrap_is_version_high_for_routing(uint8_t version_threshold, uint8_t thread_ver)
+{
+
+    if (thread_ver >= version_threshold + 3) {
+        return true;
+    }
+
+    return false;
+}
+
+static void thread_router_bootstrap_pbbr_aloc_generate(struct protocol_interface_info_entry *cur)
+{
+    // Check if network data changed or bbr info and send proactive an if needed
+    uint8_t bbr_anycast_addr[16];
+    uint8_t bbr_rloc_addr[16];
+
+    thread_addr_write_mesh_local_16(bbr_anycast_addr, 0xfc38, cur->thread_info);
+    addr_delete_matching(cur, bbr_anycast_addr, 128, ADDR_SOURCE_THREAD_ALOC);
+
+    if (0 != thread_common_primary_bbr_get(cur, bbr_rloc_addr, NULL, NULL, NULL)) {
+        // Primary BBR not present
+        return;
+    }
+    if (!addr_get_entry(cur, bbr_rloc_addr)) {
+        // Not our address
+        return;
+    }
+    tr_debug("generate primary BBR anycast address %s", trace_ipv6(bbr_anycast_addr));
+    addr_add(cur, bbr_anycast_addr, 64, ADDR_SOURCE_THREAD_ALOC, 0xffffffff, 0, true);
+    return;
+}
+
+static bool thread_router_bootstrap_is_reed_upgrade_allowed(protocol_interface_info_entry_t *cur)
+{
+    link_configuration_s *link_conf_ptr = thread_management_configuration_get(cur->id);
+
+    if (!link_conf_ptr) {
+        return true;
+    }
+
+    if (thread_info(cur)->version < THREAD_VERSION_1_2) {
+        return true;
+    }
+
+    // VR check
+    if (!(link_conf_ptr->securityPolicy & SECURITY_POLICY_ALL_ROUTERS_JOIN_ALLOWED)) {
+        uint8_t vr_threshold = link_conf_ptr->securityPolicyExt & THREAD_SECURITY_POLICY_VR_VALUE;
+        if (!thread_router_bootstrap_is_version_high_for_routing(vr_threshold, cur->thread_info->version)) {
+            return false;
+        }
+    }
+
+    if (!(link_conf_ptr->securityPolicy & THREAD_SECURITY_POLICY_CCM_DISABLED)) {
+        // ccm network
+        if (link_conf_ptr->securityPolicyExt & THREAD_SECURITY_POLICY_NCR_DISABLED) {
+            // NCR bit '1' Non-CCM Routers disabled
+            if (!thread_info(cur)->ccm_credentials_ptr) {
+                // Device does not have domain certificate
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+#else
+#define thread_router_bootstrap_pbbr_aloc_generate(cur)
+#endif
+
 
 bool thread_router_bootstrap_router_downgrade(protocol_interface_info_entry_t *cur)
 {
@@ -2239,7 +2307,7 @@ bool thread_router_bootstrap_reed_upgrade(protocol_interface_info_entry_t *cur)
         return false;
     }
 
-    if (!thread_extension_is_reed_upgrade_allowed(cur)) {
+    if (!thread_router_bootstrap_is_reed_upgrade_allowed(cur)) {
         return false;
     }
 
@@ -2699,7 +2767,7 @@ void thread_router_bootstrap_anycast_address_register(protocol_interface_info_en
     thread_bootstrap_dhcp_anycast_address_generate(cur);
     thread_bootstrap_service_anycast_address_generate(cur);
     thread_router_bootstrap_commissioner_aloc_generate(cur);
-    thread_extension_aloc_generate(cur);
+    thread_router_bootstrap_pbbr_aloc_generate(cur);
 }
 
 static int thread_router_bootstrap_network_data_propagation(protocol_interface_info_entry_t *cur, uint8_t *childUnicastAddress, bool fullList)
@@ -2802,7 +2870,7 @@ bool thread_router_bootstrap_routing_allowed(struct protocol_interface_info_entr
         return true;
     }
 
-    return !(!thread_extension_version_check(cur->thread_info->version) && !(link_conf_ptr->securityPolicy & SECURITY_POLICY_ALL_ROUTERS_JOIN_ALLOWED));
+    return !(thread_info(cur)->version < THREAD_VERSION_1_2 && !(link_conf_ptr->securityPolicy & SECURITY_POLICY_ALL_ROUTERS_JOIN_ALLOWED));
 }
 
 void thread_router_bootstrap_address_change_notify_send(protocol_interface_info_entry_t *cur)

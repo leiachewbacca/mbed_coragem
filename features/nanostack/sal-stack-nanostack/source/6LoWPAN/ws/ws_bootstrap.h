@@ -24,8 +24,7 @@ typedef enum {
     WS_DISCOVERY_START,      /**< discovery start*/
     WS_CONFIGURATION_START,  /**< configuration learn start*/
     WS_OPERATION_START,      /**< active operation start*/
-    WS_ROUTING_READY,        /**< RPL routing connected to BR*/
-    WS_ADDRESS_ADDED         /**< Address added to IF*/
+    WS_ROUTING_READY        /**< RPL routing connected to BR*/
 } ws_bootsrap_event_type_e;
 
 #ifdef HAVE_WS

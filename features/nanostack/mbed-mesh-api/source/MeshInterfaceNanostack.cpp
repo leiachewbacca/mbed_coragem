@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 ARM Limited. All rights reserved.
+ * Copyright (c) 2016-2019 ARM Limited. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  * Licensed under the Apache License, Version 2.0 (the License); you may
  * not use this file except in compliance with the License.
@@ -22,6 +22,19 @@
 #include "thread_management_if.h"
 #include "ip6string.h"
 #include "mbed_error.h"
+
+nsapi_error_t Nanostack::Interface::get_ip_address(SocketAddress *address)
+{
+    NanostackLockGuard lock;
+    uint8_t binary_ipv6[16];
+
+    if (arm_net_address_get(interface_id, ADDR_IPV6_GP, binary_ipv6) == 0) {
+        address->set_ip_bytes(binary_ipv6, NSAPI_IPv6);
+        return NSAPI_ERROR_OK;
+    } else {
+        return NSAPI_ERROR_NO_ADDRESS;
+    }
+}
 
 char *Nanostack::Interface::get_ip_address(char *buf, nsapi_size_t buflen)
 {
@@ -46,6 +59,16 @@ char *Nanostack::Interface::get_mac_address(char *buf, nsapi_size_t buflen)
     } else {
         return NULL;
     }
+}
+
+nsapi_error_t Nanostack::Interface::get_netmask(SocketAddress *address)
+{
+    return NSAPI_ERROR_UNSUPPORTED;
+}
+
+nsapi_error_t Nanostack::Interface::get_gateway(SocketAddress *address)
+{
+    return NSAPI_ERROR_UNSUPPORTED;
 }
 
 char *Nanostack::Interface::get_netmask(char *, nsapi_size_t)
@@ -78,7 +101,7 @@ Nanostack::Interface::Interface(NanostackPhy &phy) : interface_phy(phy), interfa
 
 InterfaceNanostack::InterfaceNanostack()
     : _interface(NULL),
-      ip_addr_str(), mac_addr_str(), _blocking(true)
+      ip_addr(), mac_addr_str(), _blocking(true)
 {
     // Nothing to do
 }
@@ -177,10 +200,20 @@ Nanostack *InterfaceNanostack::get_stack()
     return &Nanostack::get_instance();
 }
 
+nsapi_error_t InterfaceNanostack::get_ip_address(SocketAddress *address)
+{
+    if (_interface->get_ip_address(address) == NSAPI_ERROR_OK) {
+        ip_addr = address->get_ip_address();
+        return NSAPI_ERROR_OK;
+    }
+
+    return NSAPI_ERROR_NO_ADDRESS;
+}
+
 const char *InterfaceNanostack::get_ip_address()
 {
-    if (_interface->get_ip_address(ip_addr_str, sizeof(ip_addr_str))) {
-        return ip_addr_str;
+    if (_interface->get_ip_address(&ip_addr) == NSAPI_ERROR_OK) {
+        return ip_addr.get_ip_address();
     }
     return NULL;
 }
@@ -215,6 +248,19 @@ nsapi_error_t InterfaceNanostack::set_blocking(bool blocking)
 {
     _blocking = blocking;
     return NSAPI_ERROR_OK;
+}
+
+nsapi_error_t InterfaceNanostack::set_file_system_root_path(const char *root_path)
+{
+    int status = mesh_system_set_file_system_root_path(root_path);
+
+    if (status == 0) {
+        return MESH_ERROR_NONE;
+    } else if (status == -2) {
+        return MESH_ERROR_MEMORY;
+    }
+
+    return MESH_ERROR_UNKNOWN;
 }
 
 #if !DEVICE_802_15_4_PHY

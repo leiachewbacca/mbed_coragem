@@ -33,10 +33,6 @@ struct rpl_objective;
 
 /* Descriptor for a RPL neighbour within a DODAG
  *
- * The neighbour is normally associated with a DODAG Version, but may not be,
- * if the version has been retired, and we haven't since heard from that
- * neighbour. In that case dodag_version is NULL.
- *
  * Note that global address is only needed with downward routes, but I don't
  * think it's worth optimising for an "upward-only" build. (Unless to be a RPL
  * leaf?)
@@ -45,13 +41,14 @@ struct rpl_objective;
  * first in the instance candidate_neighbour list, in order of preference.
  */
 struct rpl_neighbour {
-    rpl_dodag_version_t *dodag_version;     // Back pointer to DODAG Version (may be NULL, if not dodag_parent)
+    rpl_dodag_version_t *dodag_version;     // Back pointer to DODAG Version
     uint8_t ll_address[16];                 // Link-local address (source of DIO)
     uint8_t global_address[16];             // Global address (from DIO RIO)
     bool dodag_parent: 1;                   // This is a DODAG parent (if true, dodag_version may not be NULL)
     bool was_dodag_parent: 1;               // Was a DODAG parent (used only during parent selection)
     bool have_global_address: 1;            // Global address known
     bool considered: 1;                     // Have considered at least once for parent selection
+    bool confirmed: 1;                      // Confirmed
     unsigned dodag_pref: 4;                 // Preference indication for DODAG parents (0=best)
     uint8_t dao_path_control;               // Path control bit assignments for DAO parent
     uint8_t old_dao_path_control;
@@ -86,9 +83,11 @@ struct rpl_dodag {
     rpl_dodag_conf_t config;                        /* Configuration from DIO */
     uint8_t info_version;                           /* Version for g_mop_prf and config */
     bool root: 1;                                   /* We are the root of this DODAG */
+    bool was_root: 1;                               /* If we have ever been a root in this DODAG */
     bool leaf: 1;                                   /* We are a leaf in this DODAG (by policy) */
     bool have_config: 1;                            /* We have the config */
     bool used: 1;                                   /* We have ever been a member of this DODAG? */
+    uint8_t new_config_advertisment_count;          /* We have advertiment new config at multicasti DIO  max updated value is 0xfe*/
     NS_LIST_HEAD(rpl_dodag_version_t, link) versions; /* List of DODAG versions (newest first) */
     prefix_list_t prefixes;                         /* Prefixes advertised in DIO PIOs */
     rpl_dio_route_list_t routes;                    /* Routes advertised in DIO RIOs*/
@@ -136,6 +135,7 @@ struct rpl_dao_target {
     uint8_t prefix_len;
     uint8_t path_sequence;
     uint8_t path_control;
+    uint8_t response_wait_time;
     int8_t interface_id;
     uint32_t lifetime;                  /* Seconds */
     uint32_t descriptor;                /* Target descriptor */
@@ -146,6 +146,8 @@ struct rpl_dao_target {
     bool descriptor_present: 1;         /* Target descriptor specified */
     bool need_seq_inc: 1;
     bool connected: 1;                  /* We know this target has a path to the root */
+    bool trig_confirmation_state: 1;         /* Enable confirmation to parent's */
+    bool active_confirmation_state: 1;
     union {
 #ifdef HAVE_RPL_ROOT
         rpl_dao_root_t root;            /* Info specific to a non-storing root */
@@ -175,12 +177,14 @@ struct rpl_instance {
     bool dio_not_consistent: 1;                     /* Something changed - not consistent this period */
     bool dao_in_transit: 1;                         /* If we have a DAO in transit */
     bool requested_dao_ack: 1;                      /* If we requested an ACK (so we retry if no ACK, rather than assuming success) */
+    bool pending_neighbour_confirmation: 1;         /* if we have not finished address registration state to parent */
     uint8_t poison_count;
     uint8_t repair_dis_count;
     uint16_t repair_dis_timer;
     uint32_t last_dao_trigger_time;
     uint16_t srh_error_count;                       /* SRH errors since last DAO trigger */
     NS_LIST_HEAD(rpl_dodag_t, link) dodags;         /* List of DODAGs */
+    rpl_neighbour_t *wait_response;
     rpl_neighbour_list_t candidate_neighbours;      /* Candidate neighbour set */
     // rpl_neighbour_list_t old_neighbours;            /* Old neighbours (without a live DODAG version) */
     rpl_dodag_version_t *current_dodag_version;     /* Pointer to DODAG version we are a member of (if any) */

@@ -47,7 +47,7 @@ typedef struct {
     ns_list_link_t link;                              /**< Link */
 } kmp_socket_if_t;
 
-static int8_t kmp_socket_if_send(kmp_service_t *service, kmp_type_e kmp_id, const kmp_addr_t *addr, void *pdu, uint16_t size);
+static int8_t kmp_socket_if_send(kmp_service_t *service, kmp_type_e kmp_id, const kmp_addr_t *addr, void *pdu, uint16_t size, uint8_t tx_identifier);
 static void kmp_socket_if_socket_cb(void *ptr);
 
 static NS_LIST_DEFINE(kmp_socket_if_list, kmp_socket_if_t, link);
@@ -108,8 +108,10 @@ int8_t kmp_socket_if_unregister(kmp_service_t *service)
     return 0;
 }
 
-static int8_t kmp_socket_if_send(kmp_service_t *service, kmp_type_e kmp_id, const kmp_addr_t *addr, void *pdu, uint16_t size)
+static int8_t kmp_socket_if_send(kmp_service_t *service, kmp_type_e kmp_id, const kmp_addr_t *addr, void *pdu, uint16_t size, uint8_t tx_identifier)
 {
+    (void) tx_identifier;
+
     if (!service || !pdu || !addr) {
         return -1;
     }
@@ -129,9 +131,9 @@ static int8_t kmp_socket_if_send(kmp_service_t *service, kmp_type_e kmp_id, cons
 
     //Build UPD Relay
     uint8_t *ptr = pdu;
-    memcpy(ptr, kmp_address_ip_get(addr), 16);
+    memcpy(ptr, addr->relay_address, 16);
     ptr += 16;
-    ptr = common_write_16_bit(kmp_address_port_get(addr), ptr);
+    ptr = common_write_16_bit(addr->port, ptr);
     memcpy(ptr, kmp_address_eui_64_get(addr), 8);
     ptr += 8;
     *ptr = kmp_id;
@@ -169,14 +171,15 @@ static void kmp_socket_if_socket_cb(void *ptr)
         ns_dyn_mem_free(pdu);
         return;
     }
-    uint8_t *relay_address, *euid64;
-    uint16_t relay_port;
+    kmp_addr_t addr;
+    addr.type = KMP_ADDR_EUI_64_AND_IP;
+
     uint8_t *data_ptr = pdu;
-    relay_address = data_ptr;
+    memcpy(addr.relay_address, data_ptr, 16);
     data_ptr += 16;
-    relay_port = common_read_16_bit(data_ptr);
+    addr.port = common_read_16_bit(data_ptr);
     data_ptr += 2;
-    euid64 = data_ptr;
+    memcpy(addr.eui_64, data_ptr, 8);
     data_ptr += 8;
 
     kmp_type_e type = kmp_api_type_from_id_get(*data_ptr++);
@@ -185,17 +188,8 @@ static void kmp_socket_if_socket_cb(void *ptr)
         return;
     }
 
-    kmp_addr_t *addr = kmp_address_create(KMP_ADDR_EUI_64_AND_IP, euid64);
-    if (!addr) {
-        ns_dyn_mem_free(pdu);
-        return;
-    }
 
-    kmp_address_ip_set(addr, relay_address);
-    kmp_address_port_set(addr, relay_port);
-
-    kmp_service_msg_if_receive(socket_if->kmp_service, type, addr, data_ptr, cb_data->d_len - 27);
-    kmp_address_delete(addr);
+    kmp_service_msg_if_receive(socket_if->kmp_service, type, &addr, data_ptr, cb_data->d_len - 27);
 
     ns_dyn_mem_free(pdu);
 }

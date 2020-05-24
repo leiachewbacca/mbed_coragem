@@ -52,19 +52,19 @@ static const uint32_t security_flags = KVStore::REQUIRE_CONFIDENTIALITY_FLAG | K
 namespace {
 
 typedef struct {
-    uint16_t metadata_size;
-    uint16_t revision;
-    uint32_t data_size;
-    uint32_t create_flags;
-    uint8_t  iv[iv_size];
+    uint16_t metadata_size = 0u;
+    uint16_t revision = 0u;
+    uint32_t data_size = 0u;
+    uint32_t create_flags = 0u;
+    uint8_t  iv[iv_size] = { 0u };
 } record_metadata_t;
 
 // incremental set handle
 typedef struct {
     record_metadata_t metadata;
-    char *key;
-    uint32_t offset_in_data;
-    uint8_t ctr_buf[enc_block_size];
+    char *key = nullptr;
+    uint32_t offset_in_data = 0u;
+    uint8_t ctr_buf[enc_block_size] = { 0u };
     mbedtls_aes_context enc_ctx;
     mbedtls_cipher_context_t auth_ctx;
     KVStore::set_handle_t underlying_handle;
@@ -109,7 +109,7 @@ int encrypt_decrypt_start(mbedtls_aes_context &enc_aes_ctx, uint8_t *iv, const c
 int encrypt_decrypt_data(mbedtls_aes_context &enc_aes_ctx, const uint8_t *in_buf,
                          uint8_t *out_buf, uint32_t chunk_size, uint8_t *ctr_buf, size_t &aes_offs)
 {
-    uint8_t stream_block[enc_block_size];
+    uint8_t stream_block[enc_block_size] = { 0 };
 
     return mbedtls_aes_crypt_ctr(&enc_aes_ctx, chunk_size, &aes_offs, ctr_buf,
                                  stream_block, in_buf, out_buf);
@@ -736,6 +736,9 @@ int SecureStore::init()
     int ret = MBED_SUCCESS;
 
     MBED_ASSERT(!(scratch_buf_size % enc_block_size));
+    if (scratch_buf_size % enc_block_size) {
+        return MBED_SYSTEM_ERROR_BASE;
+    }
 
     _mutex.lock();
 #if defined(MBEDTLS_PLATFORM_C)

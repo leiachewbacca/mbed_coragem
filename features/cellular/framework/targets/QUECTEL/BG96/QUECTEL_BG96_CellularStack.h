@@ -48,6 +48,16 @@ protected: // NetworkStack
 
     virtual nsapi_error_t socket_connect(nsapi_socket_t handle, const SocketAddress &address);
 
+#ifdef MBED_CONF_CELLULAR_OFFLOAD_DNS_QUERIES
+    virtual nsapi_error_t gethostbyname(const char *host, SocketAddress *address, nsapi_version_t version, const char *interface_name);
+    virtual nsapi_value_or_error_t gethostbyname_async(const char *host, hostbyname_cb_t callback, nsapi_version_t version = NSAPI_UNSPEC,
+                                                       const char *interface_name = NULL);
+    virtual nsapi_error_t gethostbyname_async_cancel(int id);
+#endif
+
+    virtual nsapi_error_t setsockopt(nsapi_socket_t handle, int level,
+                                     int optname, const void *optval, unsigned optlen);
+
 protected: // AT_CellularStack
 
     virtual int get_max_socket_count();
@@ -72,7 +82,29 @@ private:
     // URC handler for socket being closed
     void urc_qiurc_closed();
 
-    void handle_open_socket_response(int &modem_connect_id, int &err);
+    void handle_open_socket_response(int &modem_connect_id, int &err, bool tlssocket);
+
+    nsapi_error_t set_to_modem_impl(const char *filename, const char *config, const char *data, size_t size);
+
+#ifdef MBED_CONF_CELLULAR_OFFLOAD_DNS_QUERIES
+    // URC handler for DNS query
+    void urc_qiurc_dnsgip();
+    // read DNS query result
+    bool read_dnsgip(SocketAddress &address, nsapi_version_t _dns_version);
+    hostbyname_cb_t _dns_callback;
+    nsapi_version_t _dns_version;
+#endif
+
+    uint8_t _tls_sec_level;
+
+    /** Convert IP address to dotted string representation
+     *
+     *  BG96 requires consecutive zeros so can't use get_ip_address or ip6tos directly.
+     *
+     *  @param ip address
+     *  @param dot buffer with size NSAPI_IPv6, where address is written zero terminated
+     */
+    void ip2dot(const SocketAddress &ip, char *dot);
 };
 } // namespace mbed
 #endif /* QUECTEL_BG96_CELLULARSTACK_H_ */

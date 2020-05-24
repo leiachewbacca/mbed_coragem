@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2013 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,15 +19,15 @@
 
 #include "platform/platform.h"
 #include "platform/FileLike.h"
-#include "platform/FileHandle.h"
 #include "platform/NonCopyable.h"
-#include "mbed_toolchain.h"
+#include "platform/mbed_toolchain.h"
 #include <cstdio>
 #include <cstdarg>
 
 namespace mbed {
-/** \addtogroup platform */
+/** \addtogroup platform-public-api */
 /** @{*/
+
 /**
  * \defgroup platform_Stream Stream class
  * @{
@@ -45,6 +45,7 @@ public:
     Stream(const char *name = NULL);
     virtual ~Stream();
 
+#if !MBED_CONF_PLATFORM_STDIO_MINIMAL_CONSOLE_ONLY
     int putc(int c);
     int puts(const char *s);
     int getc();
@@ -59,7 +60,7 @@ public:
         return _file;
     }
 
-protected:
+#endif // !MBED_CONF_PLATFORM_STDIO_MINIMAL_CONSOLE_ONLY
     virtual int close();
     virtual ssize_t write(const void *buffer, size_t length);
     virtual ssize_t read(void *buffer, size_t length);
@@ -70,10 +71,13 @@ protected:
     virtual int sync();
     virtual off_t size();
 
+protected:
     virtual int _putc(int c) = 0;
     virtual int _getc() = 0;
 
+#if !MBED_CONF_PLATFORM_STDIO_MINIMAL_CONSOLE_ONLY
     std::FILE *_file;
+#endif // !MBED_CONF_PLATFORM_STDIO_MINIMAL_CONSOLE_ONLY
 
     /** Acquire exclusive access to this object.
      */

@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2013 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,12 +27,19 @@
 #include "platform/NonCopyable.h"
 
 namespace mbed {
-/** \addtogroup drivers */
+/** \defgroup drivers-public-api-can CAN
+ * \ingroup drivers-public-api
+ */
+
+/**
+ * \defgroup drivers_CANMessage CANMessage class
+ * \ingroup drivers-public-api-can
+ * @{
+ */
 
 /** CANMessage class
  *
  * @note Synchronization level: Thread safe
- * @ingroup drivers
  */
 class CANMessage : public CAN_Message {
 
@@ -98,8 +105,15 @@ public:
     }
 };
 
+/** @}*/
+
+/**
+ * \defgroup drivers_CAN CAN class
+ * \ingroup drivers-public-api-can
+ * @{
+ */
+
 /** A can bus client, used for communicating with can devices
- * @ingroup drivers
  */
 class CAN : private NonCopyable<CAN> {
 
@@ -155,6 +169,24 @@ public:
       * @param hz the bus frequency in hertz
       */
     CAN(PinName rd, PinName td, int hz);
+
+    /** Initialize CAN interface
+      *
+      * @param pinmap reference to structure which holds static pinmap
+      * @param td the transmit pin
+      * @param hz the bus frequency in hertz
+      */
+    CAN(const can_pinmap_t &pinmap);
+    CAN(const can_pinmap_t &&) = delete; // prevent passing of temporary objects
+
+    /** Initialize CAN interface and set the frequency
+      *
+      * @param pinmap reference to structure which holds static pinmap
+      * @param td the transmit pin
+      * @param hz the bus frequency in hertz
+      */
+    CAN(const can_pinmap_t &pinmap, int hz);
+    CAN(const can_pinmap_t &&, int) = delete; // prevent passing of temporary objects
 
     virtual ~CAN();
 
@@ -315,15 +347,17 @@ public:
 protected:
     virtual void lock();
     virtual void unlock();
+
     can_t               _can;
     Callback<void()>    _irq[IrqCnt];
     PlatformMutex       _mutex;
 #endif
 };
 
+/** @}*/
+
 } // namespace mbed
 
 #endif
 
 #endif    // MBED_CAN_H
-

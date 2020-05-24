@@ -71,7 +71,7 @@ fhss_structure_t *fhss_enable(fhss_api_t *fhss_api, const fhss_configuration_t *
 
     fhss_struct->fhss_event_timer = eventOS_callback_timer_register(fhss_event_timer_cb);
     fhss_struct->bs->fhss_configuration = *fhss_configuration;
-    fhss_struct->bs->fhss_stats_ptr = fhss_statistics;
+    fhss_struct->fhss_stats_ptr = fhss_statistics;
     fhss_struct->number_of_channels = channel_count;
 
     // set a invalid id to tasklet_id, so we know that one is not started yet
@@ -1123,8 +1123,9 @@ static void fhss_data_tx_done_callback(const fhss_api_t *api, bool waiting_ack, 
     }
 }
 
-static bool fhss_data_tx_fail_callback(const fhss_api_t *api, uint8_t handle, int frame_type)
+static bool fhss_data_tx_fail_callback(const fhss_api_t *api, uint8_t handle, int frame_type, uint8_t channel)
 {
+    (void) channel;
     fhss_structure_t *fhss_structure = fhss_get_object_with_api(api);
     if (!fhss_structure) {
         return false;
@@ -1384,7 +1385,9 @@ static void fhss_beacon_tasklet_func(arm_event_s *event)
     if (!fhss_structure) {
         return;
     }
+#ifdef FEA_TRACE_SUPPORT
     uint8_t parent_address[8];
+#endif
     fhss_clear_active_event(fhss_structure, event->event_type);
     // skip the init event as there will be a timer event after
     if (event->event_type == FHSS_TIMER_EVENT) {

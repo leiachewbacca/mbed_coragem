@@ -127,6 +127,7 @@ typedef enum nsapi_security {
     NSAPI_SECURITY_CHAP         = 0x6,      /*!< phrase conforms to PPP authentication context */
     NSAPI_SECURITY_EAP_TLS      = 0x7,      /*!< phrase conforms to EAP-TLS */
     NSAPI_SECURITY_PEAP         = 0x8,      /*!< phrase conforms to PEAP */
+    NSAPI_SECURITY_WPA2_ENT     = 0x9,      /*!< phrase conforms to WPA2-AES and WPA-TKIP with enterprise security */
     NSAPI_SECURITY_UNKNOWN      = 0xFF,     /*!< unknown/unsupported security in scan results */
 } nsapi_security_t;
 
@@ -214,6 +215,7 @@ typedef void *nsapi_socket_t;
 typedef enum nsapi_protocol {
     NSAPI_TCP, /*!< Socket is of TCP type */
     NSAPI_UDP, /*!< Socket is of UDP type */
+    NSAPI_ICMP, /*!< Socket is of ICMP type */
 } nsapi_protocol_t;
 
 /** Enum of standardized stack option levels
@@ -267,6 +269,18 @@ typedef enum nsapi_socket_option {
     NSAPI_DROP_MEMBERSHIP,   /*!< Drop membership to multicast address */
     NSAPI_BIND_TO_DEVICE,        /*!< Bind socket network interface name*/
 } nsapi_socket_option_t;
+
+typedef enum nsapi_tlssocket_level {
+    NSAPI_TLSSOCKET_LEVEL   = 7099, /*!< TLSSocket option level - see nsapi_tlssocket_option_t for options*/
+} nsapi_tlssocket_level_t;
+
+typedef enum nsapi_tlssocket_option {
+    NSAPI_TLSSOCKET_SET_HOSTNAME,   /*!< Set host name */
+    NSAPI_TLSSOCKET_SET_CACERT,     /*!< Set server CA certificate */
+    NSAPI_TLSSOCKET_SET_CLCERT,     /*!< Set client certificate */
+    NSAPI_TLSSOCKET_SET_CLKEY,      /*!< Set client key */
+    NSAPI_TLSSOCKET_ENABLE          /*!< Enable TLSSocket */
+} nsapi_tlssocket_option_t;
 
 /** Supported IP protocol versions of IP stack
  *

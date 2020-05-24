@@ -48,7 +48,7 @@ void sec_prot_init(sec_prot_common_t *data)
 {
     data->state = SEC_STATE_INIT;
     data->result = SEC_RESULT_OK;
-    data->ticks = SEC_TOTAL_TIMEOUT;
+    data->ticks = SEC_INIT_TIMEOUT;
     data->trickle_running = false;
 }
 
@@ -73,10 +73,14 @@ void sec_prot_timer_timeout_handle(sec_prot_t *prot, sec_prot_common_t *data, co
     if (data->ticks > ticks) {
         data->ticks -= ticks;
     } else {
-        tr_debug("prot timeout");
+        tr_debug("prot timeout, state: %i", data->state);
         data->ticks = 0;
         sec_prot_result_set(data, SEC_RESULT_TIMEOUT);
-        sec_prot_state_set(prot, data, SEC_STATE_FINISH);
+        if (data->state == SEC_STATE_INIT) {
+            sec_prot_state_set(prot, data, SEC_STATE_FINISHED);
+        } else {
+            sec_prot_state_set(prot, data, SEC_STATE_FINISH);
+        }
     }
 }
 
@@ -165,6 +169,11 @@ bool sec_prot_result_ok_check(sec_prot_common_t *data)
         return true;
     }
     return false;
+}
+
+void sec_prot_default_timeout_set(sec_prot_common_t *data)
+{
+    data->ticks = SEC_TOTAL_TIMEOUT;
 }
 
 void sec_prot_lib_nonce_generate(uint8_t *nonce)
@@ -272,7 +281,7 @@ int8_t sec_prot_lib_pmkid_calc(const uint8_t *pmk, const uint8_t *auth_eui64, co
     const uint8_t pmk_string_val[] = {"PMK Name"};
     const uint8_t pmk_string_val_len = sizeof(pmk_string_val) - 1;
 
-    const uint8_t data_len = pmk_string_val_len + EUI64_LEN + EUI64_LEN;
+    uint8_t data_len = pmk_string_val_len + EUI64_LEN + EUI64_LEN;
     uint8_t data[data_len];
     uint8_t *ptr = data;
     memcpy(ptr, pmk_string_val, pmk_string_val_len);
@@ -294,7 +303,7 @@ int8_t sec_prot_lib_ptkid_calc(const uint8_t *ptk, const uint8_t *auth_eui64, co
     const uint8_t ptk_string_val[] = {"PTK Name"};
     const uint8_t ptk_string_val_len = sizeof(ptk_string_val) - 1;
 
-    const uint8_t data_len = ptk_string_val_len + EUI64_LEN + EUI64_LEN;
+    uint8_t data_len = ptk_string_val_len + EUI64_LEN + EUI64_LEN;
     uint8_t data[data_len];
     uint8_t *ptr = data;
     memcpy(ptr, ptk_string_val, ptk_string_val_len);

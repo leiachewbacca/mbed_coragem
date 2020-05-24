@@ -74,6 +74,8 @@ static void mac_pd_data_confirm_failure_handle(protocol_interface_rf_mac_setup_s
 
 static int8_t mac_tasklet_event_handler = -1;
 
+static ns_mem_heap_size_t ns_dyn_mem_rate_limiting_threshold = 0xFFFFFFFF;
+
 /**
  * Get PHY time stamp.
  *
@@ -81,11 +83,19 @@ static int8_t mac_tasklet_event_handler = -1;
  * \return Timestamp from PHY
  *
  */
-static uint32_t mac_mcps_sap_get_phy_timestamp(protocol_interface_rf_mac_setup_s *rf_mac_setup)
+uint32_t mac_mcps_sap_get_phy_timestamp(protocol_interface_rf_mac_setup_s *rf_mac_setup)
 {
     uint32_t timestamp;
     rf_mac_setup->dev_driver->phy_driver->extension(PHY_EXTENSION_GET_TIMESTAMP, (uint8_t *)&timestamp);
     return timestamp;
+}
+
+static bool mac_data_counter_too_small(uint32_t current_counter, uint32_t packet_counter)
+{
+    if ((current_counter - packet_counter) >= 2) {
+        return true;
+    }
+    return false;
 }
 
 static bool mac_data_request_confirmation_finnish(protocol_interface_rf_mac_setup_s *rf_mac_setup, mac_pre_build_frame_t *buffer)
@@ -233,7 +243,6 @@ void mcps_sap_data_req_handler_ext(protocol_interface_rf_mac_setup_s *rf_mac_set
 
     if (!rf_mac_setup->macUpState || rf_mac_setup->scan_active) {
         status = MLME_TRX_OFF;
-        tr_debug("Drop MAC tx packet when mac disabled");
         goto verify_status;
     }
 
@@ -563,9 +572,9 @@ static uint8_t mac_data_interface_decrypt_packet(mac_pre_parsed_frame_t *b, mlme
     } else {
 
         if (!b->neigh_info) {
-            if (rf_mac_setup->mac_security_bypass_unknow_device && (b->fcf_dsn.SrcAddrMode == MAC_ADDR_MODE_64_BIT
-                                                                    && security_params->SecurityLevel > AES_SECURITY_LEVEL_ENC)) {
-                security_by_pass = true;
+            if (SrcPANId == rf_mac_setup->pan_id && rf_mac_setup->mac_security_bypass_unknow_device &&
+                    (b->fcf_dsn.SrcAddrMode == MAC_ADDR_MODE_64_BIT && security_params->SecurityLevel > AES_SECURITY_LEVEL_ENC)) {
+                security_by_pass = true;//Accept by pass only from same PAN-ID
             } else {
                 return MLME_UNSUPPORTED_SECURITY;
             }
@@ -582,10 +591,14 @@ static uint8_t mac_data_interface_decrypt_packet(mac_pre_parsed_frame_t *b, mlme
             return MLME_UNAVAILABLE_KEY;
         }
 
-        if (b->neigh_info && neighbour_validation.frameCounter < b->neigh_info->FrameCounter) {
-            tr_debug("MLME_COUNTER_ERROR");
-            return MLME_COUNTER_ERROR;
+        if (b->neigh_info) {
+            uint32_t min_accepted_frame_counter = mac_mib_key_device_frame_counter_get(key_description, b->neigh_info, device_descriptor_handle);
+            if (neighbour_validation.frameCounter < min_accepted_frame_counter) {
+                tr_debug("MLME_COUNTER_ERROR");
+                return MLME_COUNTER_ERROR;
+            }
         }
+
     }
 
     key = key_description->Key;
@@ -614,20 +627,20 @@ static uint8_t mac_data_interface_decrypt_packet(mac_pre_parsed_frame_t *b, mlme
     ccm_ptr.data_ptr = (mcps_mac_payload_pointer_get(b) + openPayloadLength);
     ccm_ptr.data_len = b->mac_payload_length - openPayloadLength;
     if (ccm_process_run(&ccm_ptr) != 0) {
-        tr_warning("MIC Fail adata %s", trace_array(ccm_ptr.adata_ptr, ccm_ptr.adata_len));
-        tr_warning("Nonce %s", trace_array(ccm_ptr.exp_nonce, 13));
-        if (openPayloadLength) {
-            tr_warning("%s", tr_array(ccm_ptr.data_ptr,  ccm_ptr.data_len));
-        }
         return MLME_SECURITY_FAIL;
     }
 
     //Update key device and key description tables
     if (!security_by_pass) {
-        b->neigh_info->FrameCounter = neighbour_validation.frameCounter + 1;
+
+        mac_sec_mib_key_device_frame_counter_set(key_description, b->neigh_info, neighbour_validation.frameCounter + 1, device_descriptor_handle);
+
         if (!key_device_description) {
-            // Black list old used keys by this device
-            mac_sec_mib_device_description_blacklist(rf_mac_setup, device_descriptor_handle);
+            if (!rf_mac_setup->secFrameCounterPerKey) {
+                // Black list old used keys by this device
+                mac_sec_mib_device_description_blacklist(rf_mac_setup, device_descriptor_handle);
+            }
+
             key_device_description =  mac_sec_mib_key_device_description_list_update(key_description);
             if (key_device_description) {
                 tr_debug("Set new device user %u for key", device_descriptor_handle);
@@ -660,7 +673,6 @@ static void mcps_comm_status_indication_generate(uint8_t status, mac_pre_parsed_
 static int8_t mac_data_interface_host_accept_data(mcps_data_ind_t *data_ind, protocol_interface_rf_mac_setup_s *rf_mac_setup)
 {
     if ((data_ind->DstAddrMode == MAC_ADDR_MODE_16_BIT) && (data_ind->DstAddr[0] == 0xff && data_ind->DstAddr[1] == 0xff)) {
-        tr_debug("Drop Multicast packet");
         return -1;
     }
 
@@ -686,6 +698,7 @@ static int8_t mac_data_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_inte
 {
     int8_t retval = -1;
     uint8_t status;
+
     //allocate Data ind primitiv and parse packet to that
     mcps_data_ind_t *data_ind = ns_dyn_mem_temporary_alloc(sizeof(mcps_data_ind_t));
 
@@ -710,7 +723,7 @@ static int8_t mac_data_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_inte
     /* Parse security part */
     mac_header_security_components_read(buf, &data_ind->Key);
 
-    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, data_ind->SrcAddr, data_ind->SrcAddrMode);
+    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, data_ind->SrcAddr, data_ind->SrcAddrMode, data_ind->SrcPANId);
     if (buf->fcf_dsn.securityEnabled) {
         status = mac_data_interface_decrypt_packet(buf, &data_ind->Key);
         if (status != MLME_SUCCESS) {
@@ -720,7 +733,6 @@ static int8_t mac_data_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_inte
     }
 
     if (!mac_payload_information_elements_parse(buf)) {
-        tr_debug("Drop by Paylod IE");
         goto DROP_PACKET;
     }
     data_ind->msduLength = buf->mac_payload_length;
@@ -738,7 +750,6 @@ static int8_t mac_data_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_inte
 
         if (buf->fcf_dsn.frameVersion == MAC_FRAME_VERSION_2015) {
             if (!rf_mac_setup->mac_extension_enabled) {
-                tr_debug("No Ext reg");
                 goto DROP_PACKET;
             }
             mcps_data_ie_list_t ie_list;
@@ -835,7 +846,8 @@ static int8_t mac_command_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_i
     //Read address and pan-id
     mac_header_get_src_address(&buf->fcf_dsn, mac_header_message_start_pointer(buf), temp_src_address);
     uint8_t address_mode = buf->fcf_dsn.SrcAddrMode;
-    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, temp_src_address, address_mode);
+    uint16_t pan_id = mac_header_get_src_panid(&buf->fcf_dsn, mac_header_message_start_pointer(buf), rf_mac_setup->pan_id);
+    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, temp_src_address, address_mode, pan_id);
     //Decrypt Packet if secured
     if (buf->fcf_dsn.securityEnabled) {
         mac_header_security_components_read(buf, &security_params);
@@ -900,7 +912,6 @@ static void mac_data_interface_parse_beacon(mac_pre_parsed_frame_t *buf, protoco
     }
 
     if (!mac_payload_information_elements_parse(buf)) {
-        tr_debug("Drop by Paylod IE");
         return;
     }
 
@@ -921,7 +932,6 @@ static void mac_data_interface_parse_beacon(mac_pre_parsed_frame_t *buf, protoco
         if (len < gts_field_length) {
             return;
         }
-//        gts_info = ptr;
         len -= gts_field_length;
         ptr += gts_field_length;
     }
@@ -976,7 +986,6 @@ static void mac_data_interface_frame_handler(mac_pre_parsed_frame_t *buf)
 {
     protocol_interface_rf_mac_setup_s *rf_mac_setup = buf->mac_class_ptr;
     if (!rf_mac_setup) {
-        tr_debug("Drop by no mac class");
         mcps_sap_pre_parsed_frame_buffer_free(buf);
         return;
     }
@@ -1074,20 +1083,21 @@ static int8_t mac_ack_sap_rx_handler(mac_pre_parsed_frame_t *buf, protocol_inter
     memset(SrcAddr, 0, 8);
     memset(&key, 0, sizeof(mlme_security_t));
     mac_header_get_src_address(&buf->fcf_dsn, mac_header_message_start_pointer(buf), SrcAddr);
+    uint16_t pan_id = mac_header_get_src_panid(&buf->fcf_dsn, mac_header_message_start_pointer(buf), rf_mac_setup->pan_id);
     /* Parse security part */
     mac_header_security_components_read(buf, &key);
 
-    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, SrcAddr, buf->fcf_dsn.SrcAddrMode);
+    buf->neigh_info = mac_sec_mib_device_description_get(rf_mac_setup, SrcAddr, buf->fcf_dsn.SrcAddrMode, pan_id);
     if (buf->fcf_dsn.securityEnabled) {
         uint8_t status = mac_data_interface_decrypt_packet(buf, &key);
         if (status != MLME_SUCCESS) {
-            tr_debug("ACK Decrypt fail");
+            rf_mac_setup->mac_tx_result = MAC_ACK_SECURITY_FAIL;
             return -1;
         }
     }
 
     if (buf->mac_payload_length && !mac_payload_information_elements_parse(buf)) {
-        tr_debug("Drop ACK by Paylod IE");
+        rf_mac_setup->mac_tx_result = MAC_ACK_SECURITY_FAIL;
         return -1;
     }
 
@@ -1138,6 +1148,7 @@ static void mac_pd_data_ack_handler(mac_pre_parsed_frame_t *buf)
             //Do not forward ACK payload but Accept ACK
             mcps_sap_pre_parsed_frame_buffer_free(buf);
             buf = NULL;
+
         }
 
         rf_mac_setup->active_pd_data_request = NULL;
@@ -1210,6 +1221,7 @@ mac_pre_build_frame_t *mcps_sap_prebuild_frame_buffer_get(uint16_t payload_size)
         return NULL;
     }
     memset(buffer, 0, sizeof(mac_pre_build_frame_t));
+    buffer->aux_header.frameCounter = 0xffffffff;
     if (payload_size) {
         //Mac interlnal payload allocate
         buffer->mac_payload = ns_dyn_mem_temporary_alloc(payload_size);
@@ -1240,7 +1252,7 @@ void mcps_sap_prebuild_frame_buffer_free(mac_pre_build_frame_t *buffer)
 
 }
 
-static bool mac_frame_security_parameters_init(ccm_globals_t *ccm_ptr, protocol_interface_rf_mac_setup_s *rf_ptr, mac_pre_build_frame_t *buffer)
+static mlme_key_descriptor_t *mac_frame_security_key_get(protocol_interface_rf_mac_setup_s *rf_ptr, mac_pre_build_frame_t *buffer)
 {
     /* Encrypt the packet payload if AES encyption bit is set */
     mlme_security_t key_source;
@@ -1248,13 +1260,13 @@ static bool mac_frame_security_parameters_init(ccm_globals_t *ccm_ptr, protocol_
     key_source.KeyIndex = buffer->aux_header.KeyIndex;
     key_source.SecurityLevel = buffer->aux_header.securityLevel;
     memcpy(key_source.Keysource, buffer->aux_header.Keysource, 8);
-    mlme_key_descriptor_t *key_description =  mac_sec_key_description_get(rf_ptr, &key_source, buffer->fcf_dsn.DstAddrMode, buffer->DstAddr, buffer->DstPANId);
+    return mac_sec_key_description_get(rf_ptr, &key_source, buffer->fcf_dsn.DstAddrMode, buffer->DstAddr, buffer->DstPANId);
+}
 
-    if (!key_description) {
-        buffer->status = MLME_UNAVAILABLE_KEY;
-        return false;
 
-    }
+static bool mac_frame_security_parameters_init(ccm_globals_t *ccm_ptr, protocol_interface_rf_mac_setup_s *rf_ptr, mac_pre_build_frame_t *buffer, mlme_key_descriptor_t *key_description)
+{
+    /* Encrypt the packet payload if AES encyption bit is set */
     mlme_device_descriptor_t *device_description;
     uint8_t *nonce_ext_64_ptr;
 
@@ -1269,7 +1281,7 @@ static bool mac_frame_security_parameters_init(ccm_globals_t *ccm_ptr, protocol_
     } else {
         //Discover device descriptor only unicast packet which need ack
         if (buffer->fcf_dsn.DstAddrMode && buffer->fcf_dsn.ackRequested) {
-            device_description =  mac_sec_mib_device_description_get(rf_ptr, buffer->DstAddr, buffer->fcf_dsn.DstAddrMode);
+            device_description =  mac_sec_mib_device_description_get(rf_ptr, buffer->DstAddr, buffer->fcf_dsn.DstAddrMode, buffer->DstPANId);
             if (!device_description) {
                 buffer->status = MLME_UNAVAILABLE_KEY;
                 return false;
@@ -1309,6 +1321,7 @@ static void mac_common_data_confirmation_handle(protocol_interface_rf_mac_setup_
     timer_mac_stop(rf_mac_setup);
     if (m_event == MAC_CCA_FAIL) {
         sw_mac_stats_update(rf_mac_setup, STAT_MAC_TX_CCA_FAIL, 0);
+        tr_info("MAC CCA fail");
         /* CCA fail */
         //rf_mac_setup->cca_failure++;
         buf->status = MLME_BUSY_CHAN;
@@ -1316,7 +1329,7 @@ static void mac_common_data_confirmation_handle(protocol_interface_rf_mac_setup_
         sw_mac_stats_update(rf_mac_setup, STAT_MAC_TX_COUNT, buf->mac_payload_length);
         if (m_event == MAC_TX_FAIL) {
             sw_mac_stats_update(rf_mac_setup, STAT_MAC_TX_FAIL, 0);
-            tr_error("MAC tx fail");
+            tr_info("MAC tx fail");
             buf->status = MLME_TX_NO_ACK;
         } else if (m_event == MAC_TX_DONE) {
             if (mac_is_ack_request_set(buf) == false) {
@@ -1340,6 +1353,8 @@ static void mac_common_data_confirmation_handle(protocol_interface_rf_mac_setup_
             buf->status = MLME_TRANSACTION_EXPIRED;
         } else if (m_event == MAC_UNKNOWN_DESTINATION) {
             buf->status = MLME_UNAVAILABLE_KEY;
+        } else if (m_event == MAC_ACK_SECURITY_FAIL) {
+            buf->status = MLME_TX_NO_ACK;
         }/** else if (m_event == MAC_TX_PRECOND_FAIL) {
            * Nothing to do, status already set to buf->status.
         }**/
@@ -1415,7 +1430,7 @@ static void mcps_data_confirm_handle(protocol_interface_rf_mac_setup_s *rf_ptr, 
     if (rf_ptr->fhss_api && !buffer->asynch_request) {
         // FHSS checks if this failed buffer needs to be pushed back to TX queue and retransmitted
         if ((rf_ptr->mac_tx_result == MAC_TX_FAIL) || (rf_ptr->mac_tx_result == MAC_CCA_FAIL)) {
-            if (rf_ptr->fhss_api->data_tx_fail(rf_ptr->fhss_api, buffer->msduHandle, mac_convert_frame_type_to_fhss(buffer->fcf_dsn.frametype)) == true) {
+            if (rf_ptr->fhss_api->data_tx_fail(rf_ptr->fhss_api, buffer->msduHandle, mac_convert_frame_type_to_fhss(buffer->fcf_dsn.frametype), rf_ptr->mac_tx_start_channel) == true) {
 
                 if (rf_ptr->mac_tx_result == MAC_TX_FAIL) {
                     buffer->fhss_retry_count += 1 + rf_ptr->mac_tx_status.retry;
@@ -1528,16 +1543,31 @@ static int8_t mcps_generic_packet_build(protocol_interface_rf_mac_setup_s *rf_pt
     mac_header_information_elements_preparation(buffer);
 
     mcps_generic_sequence_number_allocate(rf_ptr, buffer);
-
+    mlme_key_descriptor_t *key_desc = NULL;
     if (buffer->fcf_dsn.securityEnabled) {
+        bool increment_framecounter = false;
         //Remember to update security counter here!
-        buffer->aux_header.frameCounter = mac_mlme_framecounter_get(rf_ptr);
-        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer)) {
+        key_desc = mac_frame_security_key_get(rf_ptr, buffer);
+        if (!key_desc) {
+            buffer->status = MLME_UNAVAILABLE_KEY;
+            return -2;
+        }
+
+        //GET Counter
+        uint32_t new_frameCounter = mac_sec_mib_key_outgoing_frame_counter_get(rf_ptr, key_desc);
+        // If buffer frame counter is set, this is FHSS channel retry, update frame counter only if something was sent after failure
+        if ((buffer->aux_header.frameCounter == 0xffffffff) || buffer->asynch_request || mac_data_counter_too_small(new_frameCounter, buffer->aux_header.frameCounter)) {
+            buffer->aux_header.frameCounter = new_frameCounter;
+            increment_framecounter = true;
+        }
+
+        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer, key_desc)) {
             return -2;
         }
         //Increment security counter
-        mac_mlme_framecounter_increment(rf_ptr);
-
+        if (increment_framecounter) {
+            mac_sec_mib_key_outgoing_frame_counter_increment(rf_ptr, key_desc);
+        }
     }
 
     //Calculate Payload length here with IE extension
@@ -1570,7 +1600,9 @@ static int8_t mcps_generic_packet_build(protocol_interface_rf_mac_setup_s *rf_pt
         tr_debug("Too Long %u, %u pa %u header %u mic %u", frame_length, mac_payload_length, buffer->mac_header_length_with_security,  buffer->security_mic_len, dev_driver->phy_MTU);
         buffer->status = MLME_FRAME_TOO_LONG;
         //decrement security counter
-        mac_mlme_framecounter_decrement(rf_ptr);
+        if (key_desc) {
+            mac_sec_mib_key_outgoing_frame_counter_decrement(rf_ptr, key_desc);
+        }
         return -1;
     }
 
@@ -1600,15 +1632,12 @@ static int8_t mcps_generic_packet_build(protocol_interface_rf_mac_setup_s *rf_pt
     return 0;
 }
 
-int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, const mac_fcf_sequence_t *fcf, const uint8_t *data_ptr, const mcps_ack_data_payload_t *ack_payload)
+int8_t mcps_generic_ack_data_request_init(protocol_interface_rf_mac_setup_s *rf_ptr, const mac_fcf_sequence_t *fcf, const uint8_t *data_ptr, const mcps_ack_data_payload_t *ack_payload)
 {
-    phy_device_driver_s *dev_driver = rf_ptr->dev_driver->phy_driver;
-    dev_driver_tx_buffer_s *tx_buf = &rf_ptr->dev_driver_tx_buffer;
+    mac_pre_build_frame_t *buffer = &rf_ptr->enhanced_ack_buffer;
+    //save timestamp
+    rf_ptr->enhanced_ack_handler_timestamp = mac_mcps_sap_get_phy_timestamp(rf_ptr);
 
-    ccm_globals_t ccm_ptr;
-
-    mac_pre_build_frame_t pd_act_buf;
-    mac_pre_build_frame_t *buffer = &pd_act_buf;
     memset(buffer, 0, sizeof(mac_pre_build_frame_t));
     buffer->fcf_dsn.frametype = FC_ACK_FRAME;
     buffer->fcf_dsn.frameVersion = fcf->frameVersion;
@@ -1620,6 +1649,7 @@ int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, const m
     buffer->fcf_dsn.SrcAddrMode = fcf->DstAddrMode;
     buffer->fcf_dsn.SrcPanPresents = fcf->SrcPanPresents;
     buffer->fcf_dsn.DstAddrMode = fcf->SrcAddrMode;
+
     if (buffer->fcf_dsn.sequenceNumberSuppress) {
         buffer->mac_header_length_with_security = 2;
     } else {
@@ -1653,8 +1683,6 @@ int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, const m
 
     }
 
-
-    //TODO Request Application data to ACK
     uint16_t ie_header_length = 0;
     uint16_t ie_payload_length = 0;
 
@@ -1677,15 +1705,36 @@ int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, const m
 
     //This will prepare MHR length with Header IE
     mac_header_information_elements_preparation(buffer);
+    return 0;
+}
+
+
+int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, bool init_build)
+{
+    phy_device_driver_s *dev_driver = rf_ptr->dev_driver->phy_driver;
+    dev_driver_tx_buffer_s *tx_buf = &rf_ptr->dev_driver_tx_buffer;
+
+    ccm_globals_t ccm_ptr;
+    mac_pre_build_frame_t *buffer = &rf_ptr->enhanced_ack_buffer;
+    mlme_key_descriptor_t *key_desc = NULL;
 
     if (buffer->fcf_dsn.securityEnabled) {
         //Remember to update security counter here!
-        buffer->aux_header.frameCounter = mac_mlme_framecounter_get(rf_ptr);
-        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer)) {
+        key_desc = mac_frame_security_key_get(rf_ptr, buffer);
+        if (!key_desc) {
+            buffer->status = MLME_UNAVAILABLE_KEY;
             return -2;
         }
-        //Increment security counter
-        mac_mlme_framecounter_increment(rf_ptr);
+        if (init_build) {
+            buffer->aux_header.frameCounter = mac_sec_mib_key_outgoing_frame_counter_get(rf_ptr, key_desc);
+        }
+        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer, key_desc)) {
+            return -2;
+        }
+        if (init_build) {
+            //Increment security counter
+            mac_sec_mib_key_outgoing_frame_counter_increment(rf_ptr, key_desc);
+        }
     }
 
     //Calculate Payload length here with IE extension
@@ -1706,9 +1755,9 @@ int8_t mcps_generic_ack_build(protocol_interface_rf_mac_setup_s *rf_ptr, const m
     if ((frame_length) > ack_mtu_size - 2) {
         buffer->status = MLME_FRAME_TOO_LONG;
 
-        if (buffer->fcf_dsn.securityEnabled) {
+        if (key_desc) {
             //decrement security counter
-            mac_mlme_framecounter_decrement(rf_ptr);
+            mac_sec_mib_key_outgoing_frame_counter_decrement(rf_ptr, key_desc);
             ccm_free(&ccm_ptr);
         }
         return -1;
@@ -1769,7 +1818,14 @@ static int8_t mcps_generic_packet_rebuild(protocol_interface_rf_mac_setup_s *rf_
     }
 
     if (buffer->fcf_dsn.securityEnabled) {
-        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer)) {
+
+        mlme_key_descriptor_t *key_desc = mac_frame_security_key_get(rf_ptr, buffer);
+        if (!key_desc) {
+            buffer->status = MLME_UNAVAILABLE_KEY;
+            return -2;
+        }
+
+        if (!mac_frame_security_parameters_init(&ccm_ptr, rf_ptr, buffer, key_desc)) {
             return -2;
         }
     }
@@ -1865,6 +1921,7 @@ static int8_t mcps_pd_data_request(protocol_interface_rf_mac_setup_s *rf_ptr, ma
     memset(&(rf_ptr->mac_tx_status), 0, sizeof(mac_tx_status_t));
     rf_ptr->mac_cca_retry = 0;
     rf_ptr->mac_tx_retry = 0;
+    rf_ptr->mac_tx_start_channel = rf_ptr->mac_channel;
     mac_csma_param_init(rf_ptr);
     if (mcps_generic_packet_build(rf_ptr, buffer) != 0) {
         return -1;
@@ -2068,6 +2125,12 @@ void mcps_sap_pre_parsed_frame_buffer_free(mac_pre_parsed_frame_t *buf)
 
 mac_pre_parsed_frame_t *mcps_sap_pre_parsed_frame_buffer_get(const uint8_t *data_ptr, uint16_t frame_length)
 {
+    // check that system has enough space to handle the new packet
+    const mem_stat_t *ns_dyn_mem_stat = ns_dyn_mem_get_mem_stat();
+    if (ns_dyn_mem_stat && ns_dyn_mem_stat->heap_sector_allocated_bytes > ns_dyn_mem_rate_limiting_threshold) {
+        return NULL;
+    }
+
     mac_pre_parsed_frame_t *buffer = ns_dyn_mem_temporary_alloc(sizeof(mac_pre_parsed_frame_t) + frame_length);
 
     if (buffer) {
@@ -2075,6 +2138,7 @@ mac_pre_parsed_frame_t *mcps_sap_pre_parsed_frame_buffer_get(const uint8_t *data
         buffer->frameLength = frame_length;
         memcpy(mac_header_message_start_pointer(buffer), data_ptr, frame_length);
     }
+
     return buffer;
 }
 
@@ -2297,4 +2361,30 @@ uint8_t mcps_sap_purge_reg_handler(protocol_interface_rf_mac_setup_s *rf_mac_set
     }
 
     return confirmation.status;
+}
+
+int mcps_packet_ingress_rate_limit_by_memory(uint8_t free_heap_percentage)
+{
+    const mem_stat_t *ns_dyn_mem_stat = ns_dyn_mem_get_mem_stat();
+
+    if (ns_dyn_mem_stat && free_heap_percentage < 100) {
+        ns_dyn_mem_rate_limiting_threshold = ns_dyn_mem_stat->heap_sector_size / 100 * (100 - free_heap_percentage);
+        return 0;
+    }
+
+    return -1;
+}
+
+void mcps_pending_packet_counter_update_check(protocol_interface_rf_mac_setup_s *rf_mac_setup, mac_pre_build_frame_t *buffer)
+{
+    if (buffer->fcf_dsn.securityEnabled) {
+        mlme_key_descriptor_t *key_desc = mac_frame_security_key_get(rf_mac_setup, buffer);
+        if (key_desc) {
+            uint32_t current_counter = mac_sec_mib_key_outgoing_frame_counter_get(rf_mac_setup, key_desc);
+            if (mac_data_counter_too_small(current_counter, buffer->aux_header.frameCounter)) {
+                buffer->aux_header.frameCounter = current_counter;
+                mac_sec_mib_key_outgoing_frame_counter_increment(rf_mac_setup, key_desc);
+            }
+        }
+    }
 }

@@ -35,7 +35,9 @@ public:
 // from CellularBase/NetworkInterface
     virtual nsapi_error_t set_blocking(bool blocking);
     virtual NetworkStack *get_stack();
+    virtual nsapi_error_t get_ip_address(SocketAddress *address);
     virtual const char *get_ip_address();
+    virtual char *get_interface_name(char *interface_name);
     virtual void attach(mbed::Callback<void(nsapi_event_t, intptr_t)> status_cb);
     virtual nsapi_error_t connect();
     virtual nsapi_error_t disconnect();
@@ -47,7 +49,9 @@ public:
     virtual nsapi_error_t connect(const char *sim_pin, const char *apn = 0, const char *uname = 0,
                                   const char *pwd = 0);
     virtual void set_credentials(const char *apn, const char *uname = 0, const char *pwd = 0);
+    virtual nsapi_error_t get_netmask(SocketAddress *address);
     virtual const char *get_netmask();
+    virtual nsapi_error_t get_gateway(SocketAddress *address);
     virtual const char *get_gateway();
 
 // from CellularContext
@@ -100,7 +104,6 @@ protected:
     virtual void set_disconnect();
     virtual void deactivate_context();
     virtual bool get_context();
-    pdp_type_t string_to_pdp_type(const char *pdp_type);
     AT_CellularBase::CellularProperty pdp_type_t_to_cellular_property(pdp_type_t pdp_type);
     bool set_new_context(int cid);
 private:
@@ -114,13 +117,13 @@ private:
     nsapi_error_t find_and_activate_context();
     nsapi_error_t activate_ip_context();
     void check_and_deactivate_context();
-    nsapi_error_t delete_current_context();
+    void delete_current_context();
     nsapi_error_t check_operation(nsapi_error_t err, ContextOperation op);
     void ciot_opt_cb(mbed::CellularNetwork::CIoT_Supported_Opt ciot_opt);
     virtual void do_connect_with_retry();
     void do_disconnect();
+    void set_cid(int cid);
 private:
-    bool _is_connected;
     ContextOperation  _current_op;
     FileHandle *_fh;
     rtos::Semaphore _semaphore;
@@ -130,10 +133,7 @@ protected:
     char _found_apn[MAX_APN_LENGTH];
     // flag indicating if CP was requested to be setup
     bool _cp_req;
-    // flag indicating if Non-IP context was requested to be setup
-    bool _nonip_req;
-    // tells if CCIOTOPTI received green from network for CP optimization use
-    bool _cp_in_use;
+    bool _is_connected;
 };
 
 } // namespace mbed

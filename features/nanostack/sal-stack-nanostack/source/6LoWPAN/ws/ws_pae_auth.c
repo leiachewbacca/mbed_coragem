@@ -63,6 +63,16 @@
    long to wait for previous negotiation to complete */
 #define EAP_TLS_NEGOTIATION_TRIGGER_TIMEOUT    60 * 10 // 60 seconds
 
+// Default for maximum number of supplicants
+#define SUPPLICANT_MAX_NUMBER                  1000
+
+/* Default for number of supplicants to purge per garbage collect call from
+   nanostack monitor */
+#define SUPPLICANT_NUMBER_TO_PURGE             5
+
+// Short GTK lifetime value, for GTK install check
+#define SHORT_GTK_LIFETIME                     10 * 3600  // 10 hours
+
 typedef struct {
     ns_list_link_t link;                                     /**< Link */
     kmp_service_t *kmp_service;                              /**< KMP service */
@@ -77,6 +87,7 @@ typedef struct {
     sec_prot_gtk_keys_t *next_gtks;                          /**< Next GTKs */
     const sec_prot_certs_t *certs;                           /**< Certificates */
     timer_settings_t *timer_settings;                        /**< Timer settings */
+    uint16_t supp_max_number;                                /**< Max number of stored supplicants */
     uint16_t slow_timer_seconds;                             /**< Slow timer seconds */
     bool timer_running : 1;                                  /**< Timer is running */
     bool gtk_new_inst_req_exp : 1;                           /**< GTK new install required timer expired */
@@ -105,7 +116,7 @@ static void ws_pae_auth_kmp_api_create_confirm(kmp_api_t *kmp, kmp_result_e resu
 static void ws_pae_auth_kmp_api_create_indication(kmp_api_t *kmp, kmp_type_e type, kmp_addr_t *addr);
 static void ws_pae_auth_kmp_api_finished_indication(kmp_api_t *kmp, kmp_result_e result, kmp_sec_keys_t *sec_keys);
 static void ws_pae_auth_next_kmp_trigger(pae_auth_t *pae_auth, supp_entry_t *supp_entry);
-static kmp_type_e ws_pae_auth_next_protocol_get(supp_entry_t *supp_entry);
+static kmp_type_e ws_pae_auth_next_protocol_get(pae_auth_t *pae_auth, supp_entry_t *supp_entry);
 static kmp_api_t *ws_pae_auth_kmp_create_and_start(kmp_service_t *service, kmp_type_e type, supp_entry_t *supp_entry);
 static void ws_pae_auth_kmp_api_finished(kmp_api_t *kmp);
 
@@ -140,6 +151,8 @@ int8_t ws_pae_auth_init(protocol_interface_info_entry_t *interface_ptr, sec_prot
     pae_auth->next_gtks = next_gtks;
     pae_auth->certs = certs;
     pae_auth->timer_settings = timer_settings;
+    pae_auth->supp_max_number = SUPPLICANT_MAX_NUMBER;
+
     pae_auth->slow_timer_seconds = 0;
     pae_auth->gtk_new_inst_req_exp = false;
     pae_auth->gtk_new_act_time_exp = false;
@@ -149,7 +162,7 @@ int8_t ws_pae_auth_init(protocol_interface_info_entry_t *interface_ptr, sec_prot
         goto error;
     }
 
-    if (kmp_service_cb_register(pae_auth->kmp_service, ws_pae_auth_kmp_incoming_ind, ws_pae_auth_kmp_service_addr_get, ws_pae_auth_kmp_service_api_get)) {
+    if (kmp_service_cb_register(pae_auth->kmp_service, ws_pae_auth_kmp_incoming_ind, NULL, ws_pae_auth_kmp_service_addr_get, ws_pae_auth_kmp_service_api_get)) {
         goto error;
     }
 
@@ -161,7 +174,7 @@ int8_t ws_pae_auth_init(protocol_interface_info_entry_t *interface_ptr, sec_prot
         goto error;
     }
 
-    if (key_sec_prot_register(pae_auth->kmp_service) < 0) {
+    if (auth_key_sec_prot_register(pae_auth->kmp_service) < 0) {
         goto error;
     }
 
@@ -200,6 +213,14 @@ error:
     ws_pae_auth_free(pae_auth);
 
     return -1;
+}
+
+int8_t ws_pae_auth_timing_adjust(uint8_t timing)
+{
+    auth_gkh_sec_prot_timing_adjust(timing);
+    auth_fwh_sec_prot_timing_adjust(timing);
+    auth_eap_tls_sec_prot_timing_adjust(timing);
+    return 0;
 }
 
 int8_t ws_pae_auth_addresses_set(protocol_interface_info_entry_t *interface_ptr, uint16_t local_port, const uint8_t *remote_addr, uint16_t remote_port)
@@ -332,7 +353,7 @@ int8_t ws_pae_auth_node_keys_remove(protocol_interface_info_entry_t *interface_p
         sec_prot_keys_pmk_delete(&supp->sec_keys);
         sec_prot_keys_ptk_delete(&supp->sec_keys);
         supp->access_revoked = true;
-        tr_info("Access revoked; keys removed, eui-64: %s", trace_array(kmp_address_eui_64_get(supp->addr), 8));
+        tr_info("Access revoked; keys removed, eui-64: %s", trace_array(supp->addr.eui_64, 8));
         return 0;
     }
 
@@ -340,7 +361,7 @@ int8_t ws_pae_auth_node_keys_remove(protocol_interface_info_entry_t *interface_p
     supp = ws_pae_lib_supp_list_entry_eui_64_get(&pae_auth->inactive_supp_list, eui_64);
     if (supp) {
         // Deletes supplicant
-        tr_info("Access revoked; deleted, eui-64: %s", trace_array(kmp_address_eui_64_get(supp->addr), 8));
+        tr_info("Access revoked; deleted, eui-64: %s", trace_array(supp->addr.eui_64, 8));
         ws_pae_lib_supp_list_remove(&pae_auth->inactive_supp_list, supp);
         return 0;
     }
@@ -405,6 +426,38 @@ int8_t ws_pae_auth_node_access_revoke_start(protocol_interface_info_entry_t *int
     ws_pae_auth_network_keys_from_gtks_set(pae_auth);
 
     return 0;
+}
+
+int8_t ws_pae_auth_node_limit_set(protocol_interface_info_entry_t *interface_ptr, uint16_t limit)
+{
+    if (!interface_ptr) {
+        return -1;
+    }
+
+    pae_auth_t *pae_auth = ws_pae_auth_get(interface_ptr);
+    if (!pae_auth) {
+        return -1;
+    }
+
+    pae_auth->supp_max_number = limit;
+
+    return 0;
+}
+
+void ws_pae_auth_forced_gc(protocol_interface_info_entry_t *interface_ptr)
+{
+    if (!interface_ptr) {
+        return;
+    }
+
+    pae_auth_t *pae_auth = ws_pae_auth_get(interface_ptr);
+    if (!pae_auth) {
+        return;
+    }
+
+    /* Purge in maximum five entries from supplicant list (starting from oldest one)
+       per call to the function (called by nanostack monitor) */
+    ws_pae_lib_supp_list_purge(&pae_auth->active_supp_list, &pae_auth->inactive_supp_list, 0, SUPPLICANT_NUMBER_TO_PURGE);
 }
 
 static int8_t ws_pae_auth_network_keys_from_gtks_set(pae_auth_t *pae_auth)
@@ -616,7 +669,9 @@ static void ws_pae_auth_gtk_key_insert(pae_auth_t *pae_auth)
         sec_prot_keys_gtk_clear(pae_auth->next_gtks, next_gtk_index);
         sec_prot_keys_gtk_set(pae_auth->next_gtks, next_gtk_index, gtk_value, 0);
     } else {
-        randLIB_get_n_bytes_random(gtk_value, GTK_LEN);
+        do {
+            randLIB_get_n_bytes_random(gtk_value, GTK_LEN);
+        } while (sec_prot_keys_gtk_valid_check(gtk_value) < 0);
     }
 
     // Gets latest installed key lifetime and adds GTK expire offset to it
@@ -720,8 +775,8 @@ static void ws_pae_auth_kmp_service_addr_get(kmp_service_t *service, kmp_api_t *
 
     // Get supplicant address
     supp_entry_t *entry = kmp_api_data_get(kmp);
-    if (entry && entry->addr) {
-        kmp_address_copy(remote_addr, entry->addr);
+    if (entry) {
+        kmp_address_copy(remote_addr, &entry->addr);
     }
 }
 
@@ -758,6 +813,9 @@ static kmp_api_t *ws_pae_auth_kmp_incoming_ind(kmp_service_t *service, kmp_type_
 
     // If does not exists add it to list
     if (!supp_entry) {
+        // Checks if maximum number of supplicants is reached and purge supplicant list (starting from oldest one)
+        ws_pae_lib_supp_list_purge(&pae_auth->active_supp_list, &pae_auth->inactive_supp_list, pae_auth->supp_max_number, 0);
+
         supp_entry = ws_pae_lib_supp_list_add(&pae_auth->active_supp_list, addr);
         if (!supp_entry) {
             return 0;
@@ -767,7 +825,7 @@ static kmp_api_t *ws_pae_auth_kmp_incoming_ind(kmp_service_t *service, kmp_type_
         sec_prot_keys_ptk_eui_64_write(&supp_entry->sec_keys, kmp_address_eui_64_get(addr));
     } else {
         // Updates relay address
-        kmp_address_copy(supp_entry->addr, addr);
+        kmp_address_copy(&supp_entry->addr, addr);
     }
 
     // Increases waiting time for supplicant authentication
@@ -788,7 +846,7 @@ static kmp_api_t *ws_pae_auth_kmp_incoming_ind(kmp_service_t *service, kmp_type_
 
     kmp_api_data_set(kmp, supp_entry);
     // Sets address to KMP
-    kmp_api_addr_set(kmp, supp_entry->addr);
+    kmp_api_addr_set(kmp, &supp_entry->addr);
 
     // Sets security keys to KMP
     kmp_api_sec_keys_set(kmp, &supp_entry->sec_keys);
@@ -857,11 +915,22 @@ static void ws_pae_auth_next_kmp_trigger(pae_auth_t *pae_auth, supp_entry_t *sup
     supp_entry->retry_ticks = 0;
 
     // Get next protocol based on what keys supplicant has
-    kmp_type_e next_type = ws_pae_auth_next_protocol_get(supp_entry);
+    kmp_type_e next_type = ws_pae_auth_next_protocol_get(pae_auth, supp_entry);
 
     if (next_type == KMP_TYPE_NONE) {
         // All done
         return;
+    } else {
+
+        kmp_api_t *api = ws_pae_lib_kmp_list_type_get(&supp_entry->kmp_list, next_type);
+        if (api != NULL) {
+            /* For other types than GTK, only one ongoing negotiation at the same time,
+               for GTK there can be previous terminating and the new one for next key index */
+            if (next_type != IEEE_802_11_GKH) {
+                tr_info("KMP already ongoing; ignored, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
+                return;
+            }
+        }
     }
 
     // Increases waiting time for supplicant authentication
@@ -877,7 +946,7 @@ static void ws_pae_auth_next_kmp_trigger(pae_auth_t *pae_auth, supp_entry_t *sup
         uint16_t ongoing_eap_tls_cnt = ws_pae_lib_supp_list_kmp_count(&pae_auth->active_supp_list, IEEE_802_1X_MKA);
         if (ongoing_eap_tls_cnt >= MAX_SIMULTANEOUS_EAP_TLS_NEGOTIATIONS) {
             supp_entry->retry_ticks = EAP_TLS_NEGOTIATION_TRIGGER_TIMEOUT;
-            tr_info("EAP-TLS max ongoing reached, count %i, delayed: eui-64: %s", ongoing_eap_tls_cnt, trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+            tr_info("EAP-TLS max ongoing reached, count %i, delayed: eui-64: %s", ongoing_eap_tls_cnt, trace_array(supp_entry->addr.eui_64, 8));
             return;
         }
     }
@@ -902,10 +971,10 @@ static void ws_pae_auth_next_kmp_trigger(pae_auth_t *pae_auth, supp_entry_t *sup
         }
     }
 
-    kmp_api_create_request(new_kmp, next_type, supp_entry->addr, &supp_entry->sec_keys);
+    kmp_api_create_request(new_kmp, next_type, &supp_entry->addr, &supp_entry->sec_keys);
 }
 
-static kmp_type_e ws_pae_auth_next_protocol_get(supp_entry_t *supp_entry)
+static kmp_type_e ws_pae_auth_next_protocol_get(pae_auth_t *pae_auth, supp_entry_t *supp_entry)
 {
     kmp_type_e next_type = KMP_TYPE_NONE;
     sec_prot_keys_t *sec_keys = &supp_entry->sec_keys;
@@ -915,11 +984,11 @@ static kmp_type_e ws_pae_auth_next_protocol_get(supp_entry_t *supp_entry)
         sec_keys->ptk_mismatch = true;
         // start EAP-TLS towards supplicant
         next_type = IEEE_802_1X_MKA;
-        tr_info("PAE start EAP-TLS, eui-64: %s", trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+        tr_info("PAE start EAP-TLS, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
     } else if (sec_keys->ptk_mismatch) {
         // start 4WH towards supplicant
         next_type = IEEE_802_11_4WH;
-        tr_info("PAE start 4WH, eui-64: %s", trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+        tr_info("PAE start 4WH, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
     }
 
     int8_t gtk_index = -1;
@@ -935,16 +1004,29 @@ static kmp_type_e ws_pae_auth_next_protocol_get(supp_entry_t *supp_entry)
 
     if (gtk_index >= 0) {
         if (next_type == KMP_TYPE_NONE && gtk_index >= 0) {
-            // Update just GTK
-            next_type = IEEE_802_11_GKH;
-            tr_info("PAE start GKH, eui-64: %s", trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+
+            /* Check if the PTK has been already used to install GTK to specific index and if it
+             * has been, trigger 4WH to update also the PTK. This prevents writing multiple
+             * GTK keys to same index using same PTK.
+             */
+            if (pae_auth->timer_settings->gtk_expire_offset > SHORT_GTK_LIFETIME &&
+                    sec_prot_keys_ptk_installed_gtk_hash_mismatch_check(sec_keys, gtk_index)) {
+                // start 4WH towards supplicant
+                next_type = IEEE_802_11_4WH;
+                sec_keys->ptk_mismatch = true;
+                tr_info("PAE start 4WH due to GTK index re-use, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
+            } else {
+                // Update just GTK
+                next_type = IEEE_802_11_GKH;
+                tr_info("PAE start GKH, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
+            }
         }
 
-        tr_info("PAE update GTK index: %i, eui-64: %s", gtk_index, trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+        tr_info("PAE update GTK index: %i, eui-64: %s", gtk_index, trace_array(supp_entry->addr.eui_64, 8));
     }
 
     if (next_type == KMP_TYPE_NONE) {
-        tr_info("PAE authenticated, eui-64: %s", trace_array(kmp_address_eui_64_get(supp_entry->addr), 8));
+        tr_info("PAE authenticated, eui-64: %s", trace_array(supp_entry->addr.eui_64, 8));
     }
 
     return next_type;
@@ -1004,7 +1086,7 @@ static void ws_pae_auth_kmp_api_finished(kmp_api_t *kmp)
     ws_pae_lib_kmp_list_delete(&supp_entry->kmp_list, kmp);
 
     if (retry_supp) {
-        tr_info("PAE next KMP trigger, eui-64: %s", trace_array(kmp_address_eui_64_get(retry_supp->addr), 8));
+        tr_info("PAE next KMP trigger, eui-64: %s", trace_array(retry_supp->addr.eui_64, 8));
         ws_pae_auth_next_kmp_trigger(pae_auth, retry_supp);
     }
 

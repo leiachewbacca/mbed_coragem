@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2017 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +23,9 @@
 #if (DEVICE_SERIAL && DEVICE_INTERRUPTIN) || defined(DOXYGEN_ONLY)
 
 #include "platform/FileHandle.h"
-#include "SerialBase.h"
-#include "InterruptIn.h"
+#include "drivers/SerialBase.h"
+#include "drivers/InterruptIn.h"
 #include "platform/PlatformMutex.h"
-#include "hal/serial_api.h"
 #include "platform/CircularBuffer.h"
 #include "platform/NonCopyable.h"
 
@@ -39,12 +38,14 @@
 #endif
 
 namespace mbed {
-
-/** \addtogroup drivers */
+/**
+ * \defgroup drivers_UARTSerial UARTSerial class
+ * \ingroup drivers-public-api-uart
+ * @{
+ */
 
 /** Class providing buffered UART communication functionality using separate circular buffer for send and receive channels
  *
- * @ingroup drivers
  */
 
 class UARTSerial : private SerialBase, public FileHandle, private NonCopyable<UARTSerial> {
@@ -57,6 +58,13 @@ public:
      *  @param baud The baud rate of the serial port (optional, defaults to MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE)
      */
     UARTSerial(PinName tx, PinName rx, int baud = MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE);
+
+    /** Create a UARTSerial port, connected to the specified transmit and receive pins, with a particular baud rate.
+     *  @param static_pinmap reference to structure which holds static pinmap
+     *  @param baud The baud rate of the serial port (optional, defaults to MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE)
+     */
+    UARTSerial(const serial_pinmap_t &static_pinmap, int baud = MBED_CONF_PLATFORM_DEFAULT_SERIAL_BAUD_RATE);
+
     virtual ~UARTSerial();
 
     /** Equivalent to POSIX poll(). Derived from FileHandle.
@@ -255,8 +263,6 @@ public:
 
 private:
 
-    void wait_ms(uint32_t millisec);
-
     /** SerialBase lock override */
     virtual void lock(void);
 
@@ -314,6 +320,9 @@ private:
     void dcd_irq(void);
 
 };
+
+/** @}*/
+
 } //namespace mbed
 
 #endif //(DEVICE_SERIAL && DEVICE_INTERRUPTIN) || defined(DOXYGEN_ONLY)

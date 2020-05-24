@@ -17,7 +17,7 @@
 #ifndef MBED_CRC_API_H
 #define MBED_CRC_API_H
 
-#include "drivers/TableCRC.h"
+#include "drivers/internal/TableCRC.h"
 #include "hal/crc_api.h"
 #include "platform/mbed_assert.h"
 #include "platform/SingletonPtr.h"
@@ -40,8 +40,12 @@ but we check for ( width < 8) before performing shift, so it should not be an is
 #endif
 
 namespace mbed {
-/** \addtogroup drivers */
+/** \addtogroup drivers-public-api */
 /** @{*/
+/**
+ * \defgroup drivers_MbedCRC MbedCRC class
+ * @{
+ */
 
 extern SingletonPtr<PlatformMutex> mbed_crc_mutex;
 
@@ -101,7 +105,6 @@ extern SingletonPtr<PlatformMutex> mbed_crc_mutex;
  *      return 0;
  *  }
  * @endcode
- * @ingroup drivers
  */
 template <uint32_t polynomial = POLY_32BIT_ANSI, uint8_t width = 32>
 class MbedCRC {
@@ -511,22 +514,19 @@ private:
         MBED_STATIC_ASSERT(width <= 32, "Max 32-bit CRC supported");
 
 #if DEVICE_CRC
-        if (POLY_32BIT_REV_ANSI == polynomial) {
-            _crc_table = (uint32_t *)Table_CRC_32bit_Rev_ANSI;
-            _mode = TABLE;
-            return;
-        }
-        crc_mbed_config_t config;
-        config.polynomial  = polynomial;
-        config.width       = width;
-        config.initial_xor = _initial_value;
-        config.final_xor   = _final_xor;
-        config.reflect_in  = _reflect_data;
-        config.reflect_out = _reflect_remainder;
+        if (POLY_32BIT_REV_ANSI != polynomial) {
+            crc_mbed_config_t config;
+            config.polynomial  = polynomial;
+            config.width       = width;
+            config.initial_xor = _initial_value;
+            config.final_xor   = _final_xor;
+            config.reflect_in  = _reflect_data;
+            config.reflect_out = _reflect_remainder;
 
-        if (hal_crc_is_supported(&config)) {
-            _mode = HARDWARE;
-            return;
+            if (hal_crc_is_supported(&config)) {
+                _mode = HARDWARE;
+                return;
+            }
         }
 #endif
 
@@ -565,6 +565,8 @@ private:
 #endif
 
 /** @}*/
+/** @}*/
+
 } // namespace mbed
 
 #endif

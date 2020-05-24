@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 ARM Limited. All rights reserved.
+ * Copyright (c) 2016-2019 ARM Limited. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  * Licensed under the Apache License, Version 2.0 (the License); you may
  * not use this file except in compliance with the License.
@@ -25,16 +25,25 @@
 
 class Nanostack::Interface : public OnboardNetworkStack::Interface, private mbed::NonCopyable<Nanostack::Interface> {
 public:
+    virtual nsapi_error_t get_ip_address(SocketAddress *address);
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual char *get_ip_address(char *buf, nsapi_size_t buflen);
     virtual char *get_mac_address(char *buf, nsapi_size_t buflen);
+    virtual nsapi_error_t get_netmask(SocketAddress *address);
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual char *get_netmask(char *buf, nsapi_size_t buflen);
+    virtual nsapi_error_t get_gateway(SocketAddress *address);
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual char *get_gateway(char *buf, nsapi_size_t buflen);
     virtual void attach(mbed::Callback<void(nsapi_event_t, intptr_t)> status_cb);
     virtual nsapi_connection_status_t get_connection_status() const;
 
     void get_mac_address(uint8_t *buf) const
     {
-        interface_phy.get_mac_address(buf);
+        NanostackMACPhy *phy = interface_phy.nanostack_mac_phy();
+        if (phy) {
+            phy->get_mac_address(buf);
+        }
     }
 
     /**
@@ -96,9 +105,10 @@ public:
      */
     virtual nsapi_error_t disconnect();
 
-    /** Get the internally stored IP address
-    /return     IP address of the interface or null if not yet connected
-    */
+    /** @copydoc NetworkInterface::get_ip_address */
+    virtual nsapi_error_t get_ip_address(SocketAddress *address);
+
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual const char *get_ip_address();
 
     /** Get the internally stored MAC address
@@ -129,9 +139,19 @@ public:
      */
     virtual nsapi_error_t set_blocking(bool blocking);
 
+    /** Set file system root path.
+     *
+     *  Set file system root path that stack will use to write and read its data.
+     *  Setting root_path to NULL will disable file system usage.
+     *
+     *  @param  root_path Address to NUL-terminated root-path string or NULL to disable file system usage.
+     *  @return MESH_ERROR_NONE on success, MESH_ERROR_MEMORY in case of memory failure, MESH_ERROR_UNKNOWN in case of other error.
+     */
+    virtual nsapi_error_t set_file_system_root_path(const char *root_path);
+
     /** Get the interface ID
-    /return     Interface identifier
-    */
+     *  @return  Interface identifier
+     */
     int8_t get_interface_id() const
     {
         return _interface->get_interface_id();
@@ -148,7 +168,7 @@ protected:
 
     Nanostack::Interface *_interface;
 
-    char ip_addr_str[40];
+    SocketAddress ip_addr;
     char mac_addr_str[24];
     mbed::Callback<void(nsapi_event_t, intptr_t)> _connection_status_cb;
     bool _blocking;

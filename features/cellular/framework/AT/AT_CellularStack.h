@@ -20,6 +20,7 @@
 
 #include "AT_CellularBase.h"
 #include "NetworkStack.h"
+#include "PlatformMutex.h"
 
 namespace mbed {
 
@@ -42,7 +43,18 @@ public:
 
 public: // NetworkStack
 
+    virtual nsapi_error_t get_ip_address(SocketAddress *address);
+
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual const char *get_ip_address();
+
+    /**
+     * Set PDP context ID for this stack
+     *
+     *  @param cid value from AT+CGDCONT, where -1 is undefined
+     */
+    void set_cid(int cid);
+
 protected: // NetworkStack
 
     /**
@@ -100,7 +112,7 @@ protected:
             closed(false),
             started(false),
             tx_ready(false),
-            rx_avail(false),
+            tls_socket(false),
             pending_bytes(0)
         {
         }
@@ -117,7 +129,7 @@ protected:
         bool closed; // socket has been closed by a peer
         bool started; // socket has been opened on modem stack
         bool tx_ready; // socket is ready for sending on modem stack
-        bool rx_avail; // socket has data for reading on modem stack
+        bool tls_socket; // socket uses modem's internal TLS socket functionality
         nsapi_size_t pending_bytes; // The number of received bytes pending
     };
 
@@ -191,6 +203,11 @@ protected:
      */
     int find_socket_index(nsapi_socket_t handle);
 
+    /**
+     *  Checks if send to address is valid and if current stack type supports sending to that address type
+     */
+    bool is_addr_stack_compatible(const SocketAddress &addr);
+
     // socket container
     CellularSocket **_socket;
 
@@ -203,8 +220,11 @@ protected:
     // PDP context id
     int _cid;
 
-    // stack type from PDP context
+    // stack type - initialised as PDP type and set accordingly after CGPADDR checked
     nsapi_ip_stack_t _stack_type;
+
+    // IP version of send to address
+    nsapi_version_t _ip_ver_sendto;
 
 private:
 

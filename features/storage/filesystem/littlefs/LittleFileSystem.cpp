@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "filesystem/mbed_filesystem.h"
+#include "features/storage/filesystem/mbed_filesystem.h"
 #include "LittleFileSystem.h"
 #include "errno.h"
-#include "lfs.h"
-#include "lfs_util.h"
+#include "features/storage/filesystem/littlefs/littlefs/lfs.h"
+#include "features/storage/filesystem/littlefs/littlefs/lfs_util.h"
 #include "MbedCRC.h"
 
 namespace mbed {
@@ -145,6 +145,9 @@ LittleFileSystem::LittleFileSystem(const char *name, BlockDevice *bd,
                                    lfs_size_t read_size, lfs_size_t prog_size,
                                    lfs_size_t block_size, lfs_size_t lookahead)
     : FileSystem(name)
+    , _lfs()
+    , _config()
+    , _bd(NULL)
     , _read_size(read_size)
     , _prog_size(prog_size)
     , _block_size(block_size)

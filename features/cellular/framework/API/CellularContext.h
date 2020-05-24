@@ -19,6 +19,7 @@
 
 #include "CellularInterface.h"
 #include "CellularDevice.h"
+#include "CellularUtil.h"
 #include "ControlPlane_netif.h"
 #include "PinNames.h"
 
@@ -28,14 +29,6 @@
  */
 
 namespace mbed {
-
-typedef enum pdp_type {
-    DEFAULT_PDP_TYPE = DEFAULT_STACK,
-    IPV4_PDP_TYPE = IPV4_STACK,
-    IPV6_PDP_TYPE = IPV6_STACK,
-    IPV4V6_PDP_TYPE = IPV4V6_STACK,
-    NON_IP_PDP_TYPE
-} pdp_type_t;
 
 /**
  * @addtogroup cellular
@@ -54,7 +47,8 @@ public:
     enum AuthenticationType {
         NOAUTH = 0,
         PAP,
-        CHAP
+        CHAP,
+        AUTOMATIC
     };
 
     /*  whether the additional exception reports are allowed to be sent when the maximum uplink rate is reached */
@@ -127,6 +121,8 @@ protected:
 public: // from NetworkInterface
     virtual nsapi_error_t set_blocking(bool blocking) = 0;
     virtual NetworkStack *get_stack() = 0;
+    virtual nsapi_error_t get_ip_address(SocketAddress *address) = 0;
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual const char *get_ip_address() = 0;
 
     /** Register callback for status reporting.
@@ -150,7 +146,11 @@ public: // from NetworkInterface
     virtual nsapi_error_t connect(const char *sim_pin, const char *apn = 0, const char *uname = 0,
                                   const char *pwd = 0) = 0;
     virtual void set_credentials(const char *apn, const char *uname = 0, const char *pwd = 0) = 0;
+    virtual nsapi_error_t get_netmask(SocketAddress *address) = 0;
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual const char *get_netmask() = 0;
+    virtual nsapi_error_t get_gateway(SocketAddress *address) = 0;
+    MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
     virtual const char *get_gateway() = 0;
     virtual bool is_connected() = 0;
 
@@ -343,6 +343,11 @@ protected: // Device specific implementations might need these so protected
      */
     virtual void do_connect();
 
+    /** After we have connected successfully we must check that we have a valid IP address.
+     *  Some modems/networks don't give IP address right after connect so we must poll it for a while.
+     */
+    void validate_ip_address();
+
     // member variables needed in target override methods
     NetworkStack *_stack; // must be pointer because of PPP
     pdp_type_t _pdp_type;
@@ -367,6 +372,10 @@ protected: // Device specific implementations might need these so protected
     CellularDevice *_device;
     CellularNetwork *_nw;
     bool _is_blocking;
+    // flag indicating if Non-IP context was requested to be setup
+    bool _nonip_req;
+    // tells if CCIOTOPTI received green from network for CP optimization use
+    bool _cp_in_use;
 };
 
 /**

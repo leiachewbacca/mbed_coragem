@@ -19,6 +19,7 @@
 #include "CellularDevice.h"
 #include "CellularLog.h"
 #include "Thread.h"
+#include "mbed_shared_queues.h"
 
 #ifndef MBED_TRACE_MAX_LEVEL
 #define MBED_TRACE_MAX_LEVEL TRACE_LEVEL_INFO
@@ -50,9 +51,12 @@ const int DEVICE_READY = 0x04;
 namespace mbed {
 
 CellularStateMachine::CellularStateMachine(CellularDevice &device, events::EventQueue &queue, CellularNetwork &nw) :
+#ifdef MBED_CONF_RTOS_PRESENT
+    _queue_thread(0),
+#endif
     _cellularDevice(device), _state(STATE_INIT), _next_state(_state), _target_state(_state),
-    _event_status_cb(0), _network(nw), _queue(queue), _queue_thread(0), _sim_pin(0),
-    _retry_count(0), _event_timeout(-1), _event_id(-1), _plmn(0), _command_success(false),
+    _event_status_cb(0), _network(nw), _queue(queue), _sim_pin(0), _retry_count(0),
+    _event_timeout(-1), _event_id(-1), _plmn(0), _command_success(false),
     _is_retry(false), _cb_data(), _current_event(CellularDeviceReady), _status(0)
 {
 #if MBED_CONF_CELLULAR_RANDOM_MAX_START_DELAY == 0
@@ -102,12 +106,15 @@ void CellularStateMachine::reset()
 void CellularStateMachine::stop()
 {
     tr_debug("CellularStateMachine stop");
+#ifdef MBED_CONF_RTOS_PRESENT
     if (_queue_thread) {
-        _queue.break_dispatch();
         _queue_thread->terminate();
         delete _queue_thread;
         _queue_thread = NULL;
     }
+#else
+    _queue.chain(NULL);
+#endif
 
     reset();
     _event_id = STM_STOPPED;
@@ -166,6 +173,12 @@ bool CellularStateMachine::open_sim()
     bool sim_ready = state == CellularDevice::SimStateReady;
 
     if (sim_ready) {
+#ifdef MBED_CONF_CELLULAR_CLEAR_ON_CONNECT
+        if (_cellularDevice.clear() != NSAPI_ERROR_OK) {
+            tr_warning("CellularDevice clear failed");
+            return false;
+        }
+#endif
         _cb_data.error = _network.set_registration(_plmn);
         tr_debug("STM: set_registration: %d, plmn: %s", _cb_data.error, _plmn ? _plmn : "NULL");
         if (_cb_data.error) {
@@ -365,6 +378,13 @@ void CellularStateMachine::state_device_ready()
             if (device_ready()) {
                 _status = 0;
                 enter_to_state(STATE_SIM_PIN);
+            } else {
+                tr_warning("Power cycle CellularDevice and restart connecting");
+                (void) _cellularDevice.soft_power_off();
+                (void) _cellularDevice.hard_power_off();
+                _status = 0;
+                _is_retry = true;
+                enter_to_state(STATE_INIT);
             }
         }
     }
@@ -393,7 +413,6 @@ void CellularStateMachine::state_sim_pin()
             retry_state_or_fail();
             return;
         }
-
         if (_network.is_active_context()) { // check if context was already activated
             tr_debug("Active context found.");
             _status |= ACTIVE_PDP_CONTEXT;
@@ -546,7 +565,7 @@ bool CellularStateMachine::get_current_status(CellularStateMachine::CellularStat
 void CellularStateMachine::event()
 {
     // Don't send Signal quality when in signal quality state or it can confuse callback functions when running retry logic
-    if (_state != STATE_SIGNAL_QUALITY) {
+    if (_state > STATE_SIGNAL_QUALITY) {
         _cb_data.error = _network.get_signal_quality(_signal_quality.rssi, &_signal_quality.ber);
         _cb_data.data = &_signal_quality;
 
@@ -624,15 +643,24 @@ void CellularStateMachine::event()
 
 nsapi_error_t CellularStateMachine::start_dispatch()
 {
-    MBED_ASSERT(!_queue_thread);
-
-    _queue_thread = new rtos::Thread(osPriorityNormal, 2048, NULL, "stm_queue");
-    if (_queue_thread->start(callback(&_queue, &events::EventQueue::dispatch_forever)) != osOK) {
-        report_failure("Failed to start thread.");
-        stop();
-        return NSAPI_ERROR_NO_MEMORY;
+#ifdef MBED_CONF_RTOS_PRESENT
+    if (!_queue_thread) {
+        _queue_thread = new rtos::Thread(osPriorityNormal, 2048, NULL, "stm_queue");
+        _event_id = STM_STOPPED;
     }
 
+    if (_event_id == STM_STOPPED) {
+        if (_queue_thread->start(callback(&_queue, &events::EventQueue::dispatch_forever)) != osOK) {
+            report_failure("Failed to start thread.");
+            stop();
+            return NSAPI_ERROR_NO_MEMORY;
+        }
+    }
+
+    _event_id = -1;
+#else
+    _queue.chain(mbed_event_queue());
+#endif
     return NSAPI_ERROR_OK;
 }
 

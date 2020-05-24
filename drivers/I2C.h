@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2015 ARM Limited
+ * Copyright (c) 2006-2019 ARM Limited
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,11 +30,19 @@
 #if DEVICE_I2C_ASYNCH
 #include "platform/CThunk.h"
 #include "hal/dma_api.h"
-#include "platform/FunctionPointer.h"
+#include "platform/Callback.h"
 #endif
 
 namespace mbed {
-/** \addtogroup drivers */
+/** \defgroup drivers-public-api-i2c I2C
+ * \ingroup drivers-public-api
+ */
+
+/**
+ * \defgroup drivers_I2C I2C class
+ * \ingroup drivers-public-api-i2c
+ * @{
+ */
 
 /** An I2C Master, used for communicating with I2C slave devices
  *
@@ -70,7 +78,6 @@ namespace mbed {
  *   }
  * }
  * @endcode
- * @ingroup drivers
  */
 class I2C : private NonCopyable<I2C> {
 
@@ -93,6 +100,13 @@ public:
      *  @param scl I2C clock line pin
      */
     I2C(PinName sda, PinName scl);
+
+    /** Create an I2C Master interface, connected to the specified pins
+     *
+     *  @param static_pinmap reference to structure which holds static pinmap.
+     */
+    I2C(const i2c_pinmap_t &static_pinmap);
+    I2C(const i2c_pinmap_t &&) = delete; // prevent passing of temporary objects
 
     /** Set the frequency of the I2C interface
      *
@@ -241,6 +255,8 @@ private:
     int recover(PinName sda, PinName scl);
 #endif
 };
+
+/** @}*/
 
 } // namespace mbed
 

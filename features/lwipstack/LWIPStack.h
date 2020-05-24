@@ -26,6 +26,7 @@
 #include "netsocket/nsapi_types.h"
 #include "netsocket/EMAC.h"
 #include "netsocket/L3IP.h"
+#include "netsocket/PPP.h"
 #include "netsocket/OnboardNetworkStack.h"
 #include "LWIPMemoryManager.h"
 
@@ -92,13 +93,18 @@ public:
          */
         virtual char *get_mac_address(char *buf, nsapi_size_t buflen);
 
-        /** Copies IP address of the network interface to user supplied buffer
-         *
-         * @param    buf        buffer to which IP address will be copied as "W:X:Y:Z"
-         * @param    buflen     size of supplied buffer
-         * @return              Pointer to a buffer, or NULL if the buffer is too small
-         */
+        /** @copydoc NetworkStack::get_ip_address */
+        virtual nsapi_error_t get_ip_address(SocketAddress *address);
+
+        MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
         virtual char *get_ip_address(char *buf, nsapi_size_t buflen);
+
+        /** Get the IPv6 link local address in SocketAddress representation
+         *
+         *  @address        SocketAddress representation of the link local IPv6 address
+         *  @return         NSAPI_ERROR_OK on success, or error code
+         */
+        virtual nsapi_error_t get_ipv6_link_local_address(SocketAddress *address);
 
         /** Copies IP address of the name based network interface to user supplied buffer
          *
@@ -107,6 +113,9 @@ public:
          * @param    interface_name     naame of the interface
          * @return              Pointer to a buffer, or NULL if the buffer is too small
          */
+        virtual nsapi_error_t get_ip_address_if(const char *interface_name, SocketAddress *address);
+
+        MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
         virtual char *get_ip_address_if(char *buf, nsapi_size_t buflen, const char *interface_name);
 
         /** Copies netmask of the network interface to user supplied buffer
@@ -115,6 +124,9 @@ public:
          * @param    buflen     size of supplied buffer
          * @return              Pointer to a buffer, or NULL if the buffer is too small
          */
+        virtual nsapi_error_t get_netmask(SocketAddress *address);
+
+        MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
         virtual char *get_netmask(char *buf, nsapi_size_t buflen);
 
         /** Copies gateway address of the network interface to user supplied buffer
@@ -123,6 +135,9 @@ public:
          * @param    buflen     size of supplied buffer
          * @return              Pointer to a buffer, or NULL if the buffer is too small
          */
+        virtual nsapi_error_t get_gateway(SocketAddress *address);
+
+        MBED_DEPRECATED_SINCE("mbed-os-5.15", "String-based APIs are deprecated")
         virtual char *get_gateway(char *buf, nsapi_size_t buflen);
 
     private:
@@ -168,6 +183,18 @@ public:
         static err_t l3ip_if_init(struct netif *netif);
 #endif
 
+#if PPP_SUPPORT
+#if PPP_IPV4_SUPPORT && LWIP_IPV4
+        static err_t ppp4_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
+#endif
+#if PPP_IPV6_SUPPORT && LWIP_IPV6
+        static err_t ppp6_output(struct netif *netif, struct pbuf *p, const ip6_addr_t *ipaddr);
+#endif
+        void ppp_input(net_stack_mem_buf_t *buf);
+        void ppp_state_change(bool up);
+        static err_t ppp_if_init(struct netif *netif);
+#endif
+
         union {
 #if LWIP_ETHERNET
             EMAC *emac; /**< HW specific emac implementation */
@@ -175,7 +202,9 @@ public:
 #if LWIP_L3IP
             L3IP *l3ip; /**<  L3IP implementation */
 #endif
-
+#if PPP_SUPPORT
+            PPP *ppp; /**< PPP implementation */
+#endif
             void *hw; /**< alternative implementation pointer - used for PPP */
         };
 
@@ -202,7 +231,7 @@ public:
         bool dhcp_started;
         bool dhcp_has_to_be_set;
         bool blocking;
-        bool ppp;
+        bool ppp_enabled;
         mbed::Callback<void(nsapi_event_t, intptr_t)> client_callback;
         struct netif netif;
         static Interface *list;
@@ -251,7 +280,7 @@ public:
      * @param[out] interface_out    set to interface handle that must be passed to subsequent mbed_stack calls
      * @return                      NSAPI_ERROR_OK on success, or error code
      */
-    nsapi_error_t _add_ppp_interface(void *pcb, bool default_if, nsapi_ip_stack_t stack, LWIP::Interface **interface_out);
+    virtual nsapi_error_t add_ppp_interface(PPP &ppp, bool default_if, OnboardNetworkStack::Interface **interface_out);
 
     /** Remove a network interface from IP stack
      *
@@ -260,6 +289,14 @@ public:
      * @return                      NSAPI_ERROR_OK on success, or error code
      */
     virtual nsapi_error_t remove_l3ip_interface(OnboardNetworkStack::Interface **interface_out);
+
+    /** Remove a network interface from IP stack
+     *
+     * Removes PPP objects,network interface from stack list, and shutdown device driver.
+     * @param[out] interface_out    pointer to stack interface object controlling the PPP
+     * @return                      NSAPI_ERROR_OK on success, or error code
+     */
+    virtual nsapi_error_t remove_ppp_interface(OnboardNetworkStack::Interface **interface_out);
 
     /** Get a domain name server from a list of servers to query
      *
@@ -548,6 +585,7 @@ private:
     static const ip_addr_t *get_ip_addr(bool any_addr, const struct netif *netif);
     static const ip_addr_t *get_ipv4_addr(const struct netif *netif);
     static const ip_addr_t *get_ipv6_addr(const struct netif *netif);
+    static const ip_addr_t *get_ipv6_link_local_addr(const struct netif *netif);
 
     static void add_dns_addr(struct netif *lwip_netif, const char *interface_name);
 

@@ -264,6 +264,9 @@ typedef enum {
     macAutoRequestKeyIndex = 0x7b,  /*<The index of the key used for automatic data*/
     macDefaultKeySource = 0x7c,      /*<Default key source*/
     //NON standard extension
+    macDeviceDescriptionPanIDUpdate = 0xf7, /*<Thread pending link update case this will update device descrioton list pan-id to new one*/
+    macTXPower = 0xf8,              /*<TX output power*/
+    macCCAThreshold = 0xf9,         /*<CCA threshold*/
     macMultiCSMAParameters = 0xfa,  /*<Multi CSMA parameters*/
     macRfConfiguration = 0xfb,      /*<RF channel configuration parameters*/
     macAcceptByPassUnknowDevice = 0xfc,  /*< Accept data trough MAC if packet is data can be authenticated by group key nad MIC. Security enforsment point must be handled carefully these packets */
