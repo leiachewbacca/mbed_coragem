@@ -87,7 +87,7 @@
         },
         "fsb-mask": {
             "help": "FSB mask for upstream [Only for US915 & AU915] Check lorawan/FSB_Usage.txt for more details",
-            "value": "{0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x00FF}"
+            "value": "{0x00FF, 0x0000, 0x0000, 0x0000, 0x0002}"
         },
         "fsb-mask-china": {
             "help": "FSB mask for upstream [CN470 PHY] Check lorawan/FSB_Usage.txt for more details",
