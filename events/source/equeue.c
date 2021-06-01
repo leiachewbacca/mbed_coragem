@@ -2,7 +2,6 @@
  * Flexible event queue for dispatching events
  *
  * Copyright (c) 2016-2019 ARM Limited
- * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +23,6 @@
 
 // check if the event is allocaded by user - event address is outside queues internal buffer address range
 #define EQUEUE_IS_USER_ALLOCATED_EVENT(e) ((q->buffer == NULL) || ((uintptr_t)(e) < (uintptr_t)q->buffer) || ((uintptr_t)(e) > ((uintptr_t)q->slab.data)))
-
-// for user allocated events use event id to track event state
-enum {
-    EQUEUE_USER_ALLOCATED_EVENT_STATE_INPROGRESS = 1,
-    EQUEUE_USER_ALLOCATED_EVENT_STATE_DONE = 0          // event canceled or dispatching done
-};
 
 // calculate the relative-difference between absolute times while
 // correctly handling overflow conditions
@@ -236,9 +229,7 @@ void equeue_dealloc(equeue_t *q, void *p)
         e->dtor(e + 1);
     }
 
-    if (EQUEUE_IS_USER_ALLOCATED_EVENT(e)) {
-        e->id = EQUEUE_USER_ALLOCATED_EVENT_STATE_DONE;
-    } else {
+    if (!EQUEUE_IS_USER_ALLOCATED_EVENT(e)) {
         equeue_mem_dealloc(q, e);
     }
 }
@@ -351,8 +342,8 @@ static struct equeue_event *equeue_dequeue(equeue_t *q, unsigned target)
 {
     equeue_mutex_lock(&q->queuelock);
 
-    // find all expired events
-
+    // find all expired events and mark a new generation
+    q->generation += 1;
     if (equeue_tickdiff(q->tick, target) <= 0) {
         q->tick = target;
     }
@@ -369,12 +360,6 @@ static struct equeue_event *equeue_dequeue(equeue_t *q, unsigned target)
     }
 
     *p = 0;
-
-    /* we only increment the generation if events have been taken off the queue
-     * as this is the only time cancellation may conflict with dequeueing */
-    if (head) {
-        q->generation += 1;
-    }
 
     equeue_mutex_unlock(&q->queuelock);
 
@@ -417,7 +402,6 @@ void equeue_post_user_allocated(equeue_t *q, void (*cb)(void *), void *p)
     unsigned tick = equeue_tick();
     e->cb = cb;
     e->target = tick + e->target;
-    e->id = EQUEUE_USER_ALLOCATED_EVENT_STATE_INPROGRESS;
 
     equeue_enqueue(q, e, tick);
     equeue_sema_signal(&q->eventsema);
@@ -440,7 +424,7 @@ bool equeue_cancel(equeue_t *q, int id)
 
 bool equeue_cancel_user_allocated(equeue_t *q, void *e)
 {
-    if (!e || ((struct equeue_event *)e)->id == EQUEUE_USER_ALLOCATED_EVENT_STATE_DONE) {
+    if (!e) {
         return false;
     }
 
@@ -522,9 +506,7 @@ void equeue_dispatch(equeue_t *q, int ms)
                 e->target += e->period;
                 equeue_enqueue(q, e, equeue_tick());
             } else {
-                if (!EQUEUE_IS_USER_ALLOCATED_EVENT(e)) {
-                    equeue_incid(q, e);
-                }
+                equeue_incid(q, e);
                 equeue_dealloc(q, e + 1);
             }
         }
